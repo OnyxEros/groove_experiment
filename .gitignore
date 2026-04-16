@@ -1,7 +1,6 @@
 .env
 __pycache__/
 *.pyc
-data/mp3/
 data/wav/
 data/midi/
 .DS_Store
