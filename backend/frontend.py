@@ -132,7 +132,11 @@ button:disabled {
 <div id="app">
     <h2>🎧 Groove Study</h2>
     <div class="subtitle">Écoute et évalue les extraits</div>
-    <div class="progress"><div class="progress-bar" id="progress"></div></div>
+
+    <div class="progress">
+        <div class="progress-bar" id="progress"></div>
+    </div>
+
     <div id="content"></div>
 </div>
 
@@ -163,7 +167,6 @@ function render() {
     }
 
     start_time = Date.now();
-
     let s = stimuli[idx];
 
     document.getElementById("progress").style.width =
@@ -203,13 +206,13 @@ async function send() {
 
     document.getElementById("btn").disabled = true;
 
+    // ✅ CLEAN PAYLOAD (match Supabase table)
     const payload = {
         participant_id: participant_id,
         stim_id: s.stim_id || s.audio_file,
         groove: Number(document.getElementById("g").value),
         complexity: Number(document.getElementById("c").value),
-        rt: isNaN(rt) ? 0 : rt,
-        timestamp_client: Date.now()
+        rt: isNaN(rt) ? 0 : rt
     };
 
     await fetch("/response", {
