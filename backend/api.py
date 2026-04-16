@@ -92,10 +92,18 @@ def get_stimuli(n: int = 20):
 def save_response(resp: Response):
 
     row = resp.model_dump()
-    row["timestamp"] = datetime.utcnow().isoformat()
+
+    clean_row = {
+        "participant_id": row["participant_id"],
+        "stim_id": row["stim_id"],
+        "groove": row["groove"],
+        "complexity": row["complexity"],
+        "rt": row["rt"],
+        "timestamp": datetime.utcnow().isoformat()
+    }
 
     try:
-        supabase.table("responses").insert(row).execute()
+        supabase.table("responses").insert(clean_row).execute()
     except Exception as e:
         print("⚠️ Supabase error:", e)
         return {"status": "error", "detail": str(e)}
