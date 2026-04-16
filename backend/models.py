@@ -1,4 +1,5 @@
 from pydantic import BaseModel, Field
+from typing import Optional
 
 
 class Response(BaseModel):
@@ -8,11 +9,11 @@ class Response(BaseModel):
     groove: int = Field(ge=1, le=7)
     complexity: int = Field(ge=1, le=7)
 
-    rt: float
-    rt_type: str | None = None
+    rt: float = Field(ge=0)
 
-    trial_index: int | None = None
-    session_id: str | None = None
-    condition: str | None = None
+    rt_type: Optional[str] = None
+    trial_index: Optional[int] = None
+    session_id: Optional[str] = None
+    condition: Optional[str] = None
 
-    timestamp_client: float | None = None
+    timestamp_client: Optional[float] = None
