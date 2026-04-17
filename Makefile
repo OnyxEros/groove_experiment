@@ -3,7 +3,6 @@
 # =========================================================
 
 PYTHON=python
-
 REPEATS=8
 SEED=42
 
@@ -14,49 +13,67 @@ SEED=42
 
 help:
 	@echo ""
-	@echo "Groove Experiment - Commands"
+	@echo "🎧 Groove Experiment System"
 	@echo ""
-	@echo "make run         → full pipeline"
-	@echo "make fast        → quick test"
-	@echo "make analysis    → MFCC + UMAP"
-	@echo "make ui          → Streamlit explorer"
-	@echo "make serve       → API backend"
-	@echo "make clean       → delete outputs"
-	@echo "make reset       → clean + rebuild"
+	@echo "Core pipeline:"
+	@echo "  make run         → generate dataset (MIDI + audio + metadata)"
+	@echo "  make fast        → quick generation (no audio rendering)"
+	@echo "  make analysis    → compute audio + groove embeddings (UMAP spaces)"
 	@echo ""
+	@echo "Interface:"
+	@echo "  make ui          → Streamlit explorer"
+	@echo "  make serve       → FastAPI backend"
+	@echo "  make experiment  → full stack (API + UI)"
+	@echo ""
+	@echo "Maintenance:"
+	@echo "  make clean       → remove generated data"
+	@echo "  make clean-cache → remove pycache file"
+	@echo "  make reset       → clean + full rebuild + analysis"
+	@echo ""
+
 
 # =========================================================
 # SETUP
 # =========================================================
 
 setup:
-	python setup.py
-
+	$(PYTHON) setup.py
 
 
 # =========================================================
-# PIPELINE
+# PIPELINE (GENERATION)
 # =========================================================
 
 run:
 	$(PYTHON) cli.py --repeats $(REPEATS) --seed $(SEED)
 
-all:
-	$(PYTHON) cli.py --clean --repeats $(REPEATS) --seed $(SEED)
-
 fast:
 	$(PYTHON) cli.py --repeats 4 --seed $(SEED) --skip-audio
 
-debug:
-	$(PYTHON) cli.py --repeats 2 --skip-audio --analysis
+all:
+	$(PYTHON) cli.py --clean --repeats $(REPEATS) --seed $(SEED)
 
 
 # =========================================================
-# ANALYSIS
+# ANALYSIS (FULL EMBEDDING PIPELINE)
 # =========================================================
 
 analysis:
-	$(PYTHON) cli.py --repeats $(REPEATS) --seed $(SEED) --analysis
+	$(PYTHON) cli.py --analysis-only
+
+
+# =========================================================
+# REGRESSION 
+# =========================================================
+regression:
+	$(PYTHON) cli.py --regression
+
+# =========================================================
+# BACKEND
+# =========================================================
+
+serve:
+	$(PYTHON) run_server.py
 
 
 # =========================================================
@@ -68,11 +85,16 @@ ui:
 
 
 # =========================================================
-# SERVER
+# FULL STACK DEV MODE
 # =========================================================
 
-serve:
-	$(PYTHON) run_server.py
+experiment:
+	@echo "🚀 Starting full system..."
+	@echo "1/ FastAPI backend..."
+	@$(PYTHON) run_server.py &
+	@sleep 2
+	@echo "2/ Streamlit UI..."
+	@streamlit run analysis/explorer/app.py
 
 
 # =========================================================
@@ -82,18 +104,22 @@ serve:
 clean:
 	$(PYTHON) cli.py --clean
 
+clean-cache:
+	$(PYTHON) clean_pycache.py
 
 # =========================================================
-# RESET (VERY IMPORTANT)
+# RESET (SAFE FULL REBUILD)
 # =========================================================
 
 reset:
+	@echo "🧹 Full reset pipeline..."
 	$(PYTHON) cli.py --clean
-	$(PYTHON) cli.py --repeats $(REPEATS) --seed $(SEED) --analysis
+	$(PYTHON) cli.py --repeats $(REPEATS) --seed $(SEED)
+	$(PYTHON) cli.py --analysis
 
 
 # =========================================================
-# MARK PHONY
+# PHONY
 # =========================================================
 
-.PHONY: run all fast debug analysis ui serve clean reset help
+.PHONY: help setup run fast all analysis serve ui experiment clean reset

@@ -1,12 +1,17 @@
 import pandas as pd
-from analysis.embeddings.umap_groove import umap_3d
-from config import METADATA_PATH
+from analysis.embeddings.groove import compute_umap_groove
 
 
-def run_groove_pipeline(save=True):
+def run_groove_pipeline(df, save=True):
 
-    df = pd.read_csv(METADATA_PATH)
+    if df.empty:
+        raise ValueError("Empty dataset")
 
-    emb, reducer = umap_3d(df)
+    emb, reducer = compute_umap_groove(df)
 
-    return df, emb, reducer
+    df = df.copy()
+    df["u1"] = emb[:, 0]
+    df["u2"] = emb[:, 1]
+    df["u3"] = emb[:, 2]
+
+    return df, reducer
