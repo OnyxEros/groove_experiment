@@ -1,10 +1,14 @@
 import umap
 from sklearn.preprocessing import StandardScaler
 
-def umap_3d(df):
-    features = ["D", "V", "S_real", "I"]
 
-    X = StandardScaler().fit_transform(df[features].values)
+FEATURES = ["D", "V", "S_real"]
+
+
+def compute_umap_groove(df):
+    X = df[FEATURES].values
+
+    X = StandardScaler().fit_transform(X)
 
     reducer = umap.UMAP(
         n_components=3,
@@ -16,9 +20,4 @@ def umap_3d(df):
 
     emb = reducer.fit_transform(X)
 
-    df = df.copy()
-    df["u1"] = emb[:, 0]
-    df["u2"] = emb[:, 1]
-    df["u3"] = emb[:, 2]
-
-    return df, reducer
+    return emb, reducer
