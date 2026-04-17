@@ -9,8 +9,6 @@ from fastapi.staticfiles import StaticFiles
 
 from config import MP3_DIR, METADATA_PATH
 from backend.models import Response
-from backend.frontend import HTML_PAGE
-
 from infra.supabase_client import insert_response
 
 
@@ -27,10 +25,6 @@ app = FastAPI()
 
 @app.on_event("startup")
 def startup():
-    """
-    Load ONLY local stimuli metadata.
-    Supabase is NOT loaded here.
-    """
 
     df = pd.read_csv(METADATA_PATH)
 
@@ -40,21 +34,20 @@ def startup():
     if "mp3_path" not in df.columns:
         raise RuntimeError("Missing column: mp3_path")
 
-    # prepare audio filenames for frontend
     df["audio_file"] = df["mp3_path"].apply(lambda p: Path(p).name)
 
     app.state.df_global = df
 
 
 # =========================================================
-# STATIC AUDIO SERVER
+# STATIC FILES
 # =========================================================
 
-app.mount(
-    "/audio",
-    StaticFiles(directory=str(MP3_DIR)),
-    name="audio"
-)
+# audio files
+app.mount("/audio", StaticFiles(directory=str(MP3_DIR)), name="audio")
+
+# JS frontend
+app.mount("/static", StaticFiles(directory="backend/static"), name="static")
 
 
 # =========================================================
@@ -70,7 +63,7 @@ def new_participant():
 
 
 # =========================================================
-# STIMULI ENDPOINT
+# STIMULI
 # =========================================================
 
 @app.get("/stimuli")
@@ -91,7 +84,7 @@ def get_stimuli(n: int = 20):
 
 
 # =========================================================
-# RESPONSE → SUPABASE (CLEAN RELAY)
+# RESPONSE → SUPABASE
 # =========================================================
 
 @app.post("/response")
@@ -102,11 +95,9 @@ def save_response(resp: Response):
     clean_row = {
         "participant_id": row["participant_id"],
         "stim_id": row["stim_id"],
-
         "groove": row.get("groove"),
         "complexity": row.get("complexity"),
         "rt": row.get("rt"),
-
         "created_at": datetime.utcnow().isoformat()
     }
 
@@ -121,9 +112,10 @@ def save_response(resp: Response):
 
 
 # =========================================================
-# FRONTEND
+# FRONTEND (HTML FILE)
 # =========================================================
 
 @app.get("/", response_class=HTMLResponse)
 def home():
-    return HTML_PAGE
+    html = Path("backend/templates/index.html").read_text()
+    return HTMLResponse(content=html)
