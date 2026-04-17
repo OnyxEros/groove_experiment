@@ -107,8 +107,6 @@ def save_response(resp: Response):
         "complexity": row.get("complexity"),
         "rt": row.get("rt"),
 
-        "phase": row.get("phase"),
-
         "created_at": datetime.utcnow().isoformat()
     }
 
