@@ -1,8 +1,11 @@
 import argparse
 import sys
-from pathlib import Path
 import shutil
+from pathlib import Path
 
+# =========================================================
+# CONFIG
+# =========================================================
 from config import (
     ensure_data_dirs,
     MIDI_DIR,
@@ -12,24 +15,39 @@ from config import (
     SOUNDFONT_PATH,
 )
 
+# =========================================================
+# GENERATION
+# =========================================================
 from groove.generator import run_experiment
 from audio.midi_export import export_all
 from audio.mp3 import convert_all, build_audio_map
 
+# =========================================================
+# ANALYSIS
+# =========================================================
 from analysis.pipelines.full_analysis import run_full_analysis
 
-from backend.dataset import load_dataset
-from backend.supabase_client import upsert_rows
-from backend.dataset_store import sync_responses
+# =========================================================
+# LOCAL STORE (dataset propre)
+# =========================================================
+from backend.dataset import load_dataset as load_local_dataset
 
-from regression import load_dataset as load_reg_dataset
-from regression import train_model, evaluate_model
+# =========================================================
+# SUPABASE LAYER (unique point d'entrée)
+# =========================================================
+from data.store import sync_responses
+
+# =========================================================
+# REGRESSION
+# =========================================================
+from regression.data_loader import load_dataset as load_regression_dataset
+from regression.model import train_model
+from regression.evaluation import evaluate_model
 
 
 # =========================================================
 # UTILS
 # =========================================================
-
 def log(msg):
     print(f"\n{msg}\n")
 
@@ -42,7 +60,6 @@ def safe_exit(msg, code=1):
 # =========================================================
 # CLEAN
 # =========================================================
-
 def clean():
     log("🧹 Cleaning outputs...")
 
@@ -59,7 +76,6 @@ def clean():
 # =========================================================
 # PIPELINE STEPS
 # =========================================================
-
 def step_generate(seed, n_repeats):
     log("🎛️ Generating stimuli...")
     return run_experiment(seed=seed, n_repeats=n_repeats)
@@ -85,7 +101,7 @@ def step_audio():
 
 
 def step_dataset(df):
-    log("📊 Building dataset...")
+    log("📊 Building dataset (local metadata)...")
 
     df = build_audio_map(df, mp3_root=MP3_DIR)
 
@@ -100,7 +116,7 @@ def step_dataset(df):
 def step_analysis():
     log("🧠 Running full analysis pipeline...")
 
-    if not Path(MP3_DIR).exists():
+    if not MP3_DIR.exists():
         safe_exit("MP3 directory not found. Run full pipeline first.")
 
     return run_full_analysis(mp3_dir=MP3_DIR, save=True)
@@ -109,26 +125,23 @@ def step_analysis():
 # =========================================================
 # SUPABASE SYNC
 # =========================================================
-
 def step_sync_supabase():
     log("☁️ Syncing to Supabase...")
 
-    df = load_dataset()
+    df = load_local_dataset()
 
-    rows = df.to_dict(orient="records")
-    upsert_rows("responses", rows)
+    sync_responses(df)
 
-    log(f"✔ Synced {len(rows)} rows")
+    log(f"✔ Synced {len(df)} rows")
 
 
 # =========================================================
 # REGRESSION
 # =========================================================
-
 def step_regression():
     log("📈 Running regression...")
 
-    df = load_reg_dataset()
+    df = load_regression_dataset()
 
     model = train_model(df)
     metrics = evaluate_model(model, df)
@@ -142,7 +155,6 @@ def step_regression():
 # =========================================================
 # FULL PIPELINE
 # =========================================================
-
 def run_full(seed=42, n_repeats=8, skip_audio=False):
     ensure_data_dirs()
 
@@ -165,7 +177,6 @@ def run_full(seed=42, n_repeats=8, skip_audio=False):
 # =========================================================
 # MAIN
 # =========================================================
-
 def main():
     parser = argparse.ArgumentParser(description="🎧 Groove Experiment CLI")
 
@@ -193,12 +204,8 @@ def main():
     # ANALYSIS ONLY
     # =====================================================
     if args.analysis_only:
-        log("📂 Loading existing dataset...")
-
-        try:
-            load_dataset()
-        except Exception:
-            safe_exit("Dataset not found. Run full pipeline first.")
+        log("📂 Loading dataset...")
+        load_local_dataset()
 
         step_analysis()
         return
@@ -215,7 +222,6 @@ def main():
     # =====================================================
     # OPTIONAL STEPS
     # =====================================================
-
     if args.analysis:
         step_analysis()
 
@@ -231,6 +237,5 @@ def main():
 # =========================================================
 # ENTRYPOINT
 # =========================================================
-
 if __name__ == "__main__":
     main()

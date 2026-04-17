@@ -1,23 +1,7 @@
-import numpy as np
+FEATURES = ["S_mv", "E", "D", "V", "I", "BPM"]
+TARGET = "groove_rating"
 
-
-FEATURES = ["D", "V", "S_real", "u1", "u2", "u3"]
-
-
-def build_feature_matrix(df):
-    """
-    Build regression feature matrix.
-
-    Returns:
-        X (np.ndarray)
-        y (np.ndarray)
-    """
-
-    required = FEATURES + ["response"]
-
-    df = df.dropna(subset=required)
-
-    X = df[FEATURES].values.astype(float)
-    y = df["response"].values.astype(float)
-
-    return X, y
+def prepare_features(df):
+    df = df.copy()
+    df["S_mv2"] = df["S_mv"] ** 2
+    return df
