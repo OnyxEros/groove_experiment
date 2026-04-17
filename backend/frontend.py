@@ -1,3 +1,5 @@
+HTML_PAGE = r"""
+<!DOCTYPE html>
 <html>
 <head>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -14,7 +16,8 @@
 
 body {
     margin: 0;
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, 
+Arial;
     background: radial-gradient(circle at top, #1a1d25, var(--bg));
     color: var(--text);
     display: flex;
@@ -106,51 +109,39 @@ input[type=range] {
 
 <div id="app">
 
-<!-- INTRO -->
 <div id="intro">
-
     <h2>🎧 Groove Study</h2>
-
-    <div class="subtitle">
-        Expérience de perception musicale
-    </div>
+    <div class="subtitle">Expérience de perception musicale</div>
 
     <div class="card">
-        Vous allez écouter des extraits musicaux.
-        Après chaque extrait, vous évaluerez :
-        <br><br>
+        Vous allez écouter des extraits musicaux.<br><br>
 
-        <b>Groove</b> : envie de bouger (taper du pied, hocher la tête)<br><br>
+        <b>Groove</b> : envie de bouger (taper du pied, hocher la 
+tête)<br><br>
 
-        <b>Complexité</b> : impression de structure rythmique simple ou riche
-        <br><br>
+        <b>Complexité</b> : impression de structure rythmique simple ou 
+riche<br><br>
 
-        Répondez spontanément — il n’y a pas de bonne ou mauvaise réponse.
+        Répondez spontanément — il n'y a pas de bonne ou mauvaise réponse.
     </div>
 
     <button onclick="startCalibration()">Commencer</button>
 </div>
 
-<!-- CALIBRATION -->
 <div id="calibration" style="display:none;">
     <h2>Calibration</h2>
-
     <div class="subtitle">
-        Utilisez les sliders selon votre ressenti, sans répondre trop vite.
+        Utilisez les sliders selon votre ressenti, sans répondre trop 
+vite.
     </div>
-
     <button onclick="startExperiment()">Démarrer l'expérience</button>
 </div>
 
-<!-- TASK -->
 <div id="task" style="display:none;">
-
     <div class="progress">
         <div class="progress-bar" id="progress"></div>
     </div>
-
     <div class="subtitle" id="counter"></div>
-
     <div id="content"></div>
 </div>
 
@@ -165,19 +156,13 @@ let start_time = 0;
 let canRespond = false;
 let is_sending = false;
 
-/* ---------------- INIT ---------------- */
-
 async function init() {
-
-    participant_id = (await fetch("/new_participant").then(r => r.json())).participant_id;
-
+    participant_id = (await fetch("/new_participant").then(r => 
+r.json())).participant_id;
     stimuli = await fetch("/stimuli?n=20").then(r => r.json());
-
     shuffle(stimuli);
     preloadAudio(stimuli);
 }
-
-/* ---------------- UX FLOW ---------------- */
 
 function startCalibration() {
     document.getElementById("intro").style.display = "none";
@@ -190,15 +175,12 @@ function startExperiment() {
     render();
 }
 
-/* ---------------- EXPERIMENT ---------------- */
-
 function render() {
 
     if (idx >= stimuli.length) {
-        document.getElementById("app").innerHTML = `
-            <h2>🙏 Merci</h2>
-            <div class="subtitle">Expérience terminée</div>
-        `;
+        document.getElementById("app").innerHTML =
+            "<h2>🙏 Merci</h2><div class='subtitle'>Expérience 
+terminée</div>";
         return;
     }
 
@@ -208,7 +190,8 @@ function render() {
     document.getElementById("progress").style.width = progress + "%";
 
     document.getElementById("counter").innerText =
-        `Extrait ${idx+1} / ${stimuli.length} (${progress}%)`;
+        "Extrait " + (idx+1) + " / " + stimuli.length + " (" + progress + 
+"%)";
 
     canRespond = false;
 
@@ -223,13 +206,15 @@ function render() {
 
         <div class="slider-block">
             <label>Groove</label>
-            <div class="scale-labels"><span>Faible</span><span>Fort</span></div>
+            <div 
+class="scale-labels"><span>Faible</span><span>Fort</span></div>
             <input type="range" id="g" min="1" max="7" value="4">
         </div>
 
         <div class="slider-block">
             <label>Complexité</label>
-            <div class="scale-labels"><span>Simple</span><span>Complexe</span></div>
+            <div 
+class="scale-labels"><span>Simple</span><span>Complexe</span></div>
             <input type="range" id="c" min="1" max="7" value="4">
         </div>
 
@@ -240,11 +225,9 @@ function render() {
 
     audio.oncanplaythrough = () => {
         start_time = Date.now();
-        canRespond = true;
+        setTimeout(() => { canRespond = true; }, 500);
     };
 }
-
-/* ---------------- SEND RESPONSE ---------------- */
 
 async function send() {
 
@@ -257,11 +240,11 @@ async function send() {
     document.getElementById("btn").disabled = true;
 
     const payload = {
-        participant_id,
+        participant_id: participant_id,
         stim_id: s.stim_id || s.audio_file,
         groove: Number(document.getElementById("g").value),
         complexity: Number(document.getElementById("c").value),
-        rt,
+        rt: rt,
         order: idx,
         timestamp: Date.now(),
         is_catch: s.is_catch || false
@@ -275,17 +258,14 @@ async function send() {
 
     idx++;
 
-    // inter-stimulus fixation
     document.getElementById("content").innerHTML =
-        `<div class="center" style="opacity:0.5; font-size:20px;">+</div>`;
+        "<div class='center' style='opacity:0.5;font-size:20px;'>+</div>";
 
     setTimeout(() => {
         is_sending = false;
         render();
     }, 600);
 }
-
-/* ---------------- UTILITIES ---------------- */
 
 function shuffle(array) {
     for (let i = array.length - 1; i > 0; i--) {
@@ -302,11 +282,10 @@ function preloadAudio(stimuli) {
     });
 }
 
-/* ---------------- START ---------------- */
-
 init();
 
 </script>
 
 </body>
 </html>
+"""
