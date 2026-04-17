@@ -108,7 +108,6 @@ def save_response(resp: Response):
         "rt": row.get("rt"),
 
         "phase": row.get("phase"),
-        "bpm": row.get("bpm"),
 
         "created_at": datetime.utcnow().isoformat()
     }
