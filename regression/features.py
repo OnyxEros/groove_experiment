@@ -1,7 +1,20 @@
-FEATURES = ["S_mv", "E", "D", "V", "I", "BPM"]
-TARGET = "groove_rating"
+def add_features(df):
+    """
+    Add model variables (theoretical + emergent)
+    """
 
-def prepare_features(df):
-    df = df.copy()
-    df["S_mv2"] = df["S_mv"] ** 2
+    # ensure numeric stability
+    df["groove"] = df["groove"].astype(float)
+
+    # interactions / non-linear terms (paper-ready)
+    df["S_mv_sq"] = df.get("S_mv", 0) ** 2
+
+    # placeholders if not yet computed
+    if "D" not in df:
+        df["D"] = 0
+    if "I" not in df:
+        df["I"] = 0
+    if "V" not in df:
+        df["V"] = 0
+
     return df

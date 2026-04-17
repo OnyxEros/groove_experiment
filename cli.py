@@ -28,21 +28,26 @@ from audio.mp3 import convert_all, build_audio_map
 from analysis.pipelines.full_analysis import run_full_analysis
 
 # =========================================================
-# LOCAL STORE (dataset propre)
+# LOCAL DATASET
 # =========================================================
 from backend.dataset import load_dataset as load_local_dataset
 
 # =========================================================
-# SUPABASE LAYER (unique point d'entrée)
+# SUPABASE
 # =========================================================
-from data.store import sync_responses
+from infra.supabase_client import get_supabase
 
 # =========================================================
 # REGRESSION
 # =========================================================
-from regression.data_loader import load_dataset as load_regression_dataset
-from regression.model import train_model
-from regression.evaluation import evaluate_model
+from regression.run import run_regression
+
+# =========================================================
+# PERCEPTION (NEW)
+# =========================================================
+from perception.loader import load_perceptual_dataset
+from perception.alignment import fit_alignment
+from perception.metrics import cluster_perception_diff
 
 
 # =========================================================
@@ -101,7 +106,7 @@ def step_audio():
 
 
 def step_dataset(df):
-    log("📊 Building dataset (local metadata)...")
+    log("📊 Building dataset...")
 
     df = build_audio_map(df, mp3_root=MP3_DIR)
 
@@ -129,8 +134,9 @@ def step_sync_supabase():
     log("☁️ Syncing to Supabase...")
 
     df = load_local_dataset()
+    supabase = get_supabase()
 
-    sync_responses(df)
+    supabase.table("stimuli").upsert(df.to_dict(orient="records")).execute()
 
     log(f"✔ Synced {len(df)} rows")
 
@@ -139,17 +145,41 @@ def step_sync_supabase():
 # REGRESSION
 # =========================================================
 def step_regression():
-    log("📈 Running regression...")
+    log("📈 Running regression model...")
 
-    df = load_regression_dataset()
+    return run_regression()
 
-    model = train_model(df)
-    metrics = evaluate_model(model, df)
 
-    print("\n📊 Regression metrics:")
-    print(metrics)
+# =========================================================
+# PERCEPTION PIPELINE (NEW)
+# =========================================================
+def step_perception():
+    log("🧠 Loading embeddings + perception data...")
 
-    return model, metrics
+    Z, stimulus_ids = load_local_dataset(return_embeddings=True)
+
+    df = __import__("pandas").DataFrame(Z, columns=["z1", "z2", "z3"])
+    df["stimulus_id"] = stimulus_ids
+
+    df = load_perceptual_dataset(df)
+
+    Z = df[["z1", "z2", "z3"]].values
+    ratings = df["rating"].values
+
+    log("🎯 Fitting perceptual alignment...")
+
+    model, score = fit_alignment(Z, ratings)
+
+    print("\n📊 Perceptual alignment R²:")
+    print(score)
+
+    # cluster insight optional (if available)
+    if "cluster" in df.columns:
+        scores = cluster_perception_diff(df["cluster"].values, ratings)
+        print("\n📦 Cluster perception:")
+        print(scores)
+
+    return model, score
 
 
 # =========================================================
@@ -190,38 +220,30 @@ def main():
 
     parser.add_argument("--sync", action="store_true")
     parser.add_argument("--regression", action="store_true")
+    parser.add_argument("--perception", action="store_true")
 
     args = parser.parse_args()
 
-    # =====================================================
     # CLEAN
-    # =====================================================
     if args.clean:
         clean()
         return
 
-    # =====================================================
     # ANALYSIS ONLY
-    # =====================================================
     if args.analysis_only:
         log("📂 Loading dataset...")
         load_local_dataset()
-
         step_analysis()
         return
 
-    # =====================================================
     # FULL PIPELINE
-    # =====================================================
     df = run_full(
         seed=args.seed,
         n_repeats=args.repeats,
         skip_audio=args.skip_audio,
     )
 
-    # =====================================================
     # OPTIONAL STEPS
-    # =====================================================
     if args.analysis:
         step_analysis()
 
@@ -230,6 +252,9 @@ def main():
 
     if args.regression:
         step_regression()
+
+    if args.perception:
+        step_perception()
 
     print("\n🔥 READY\n")
 

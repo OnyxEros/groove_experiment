@@ -1,31 +1,38 @@
-import pandas as pd
-from config import METADATA_PATH
+from analysis.embeddings.manager import EmbeddingManager
+from analysis.embeddings.audio import compute_audio_umap
+from analysis.embeddings.groove import compute_groove_umap
+from analysis.embeddings.clustering import cluster_latent_space
 
-from analysis.pipelines.audio_space import build_audio_embeddings
-from analysis.pipelines.groove_space import run_groove_pipeline
 
+def run_full_analysis(X_audio, X_groove, mode="joint"):
 
-def run_full_analysis(mp3_dir, save=True):
+    manager = EmbeddingManager()
 
-    # 1. AUDIO
-    emb, stim_ids, paths = build_audio_embeddings(mp3_dir)
+    # -----------------------------------------------------
+    # AUDIO
+    # -----------------------------------------------------
+    if mode == "audio":
+        Z = manager.fit("audio", X_audio)
+        labels, _ = cluster_latent_space(Z)
+        return Z, labels, manager
 
-    audio_df = pd.DataFrame({
-        "stim_id": stim_ids,
-        "mp3_path": paths
-    })
+    # -----------------------------------------------------
+    # GROOVE
+    # -----------------------------------------------------
+    if mode == "groove":
+        Z = manager.fit("groove", X_groove)
+        labels, _ = cluster_latent_space(Z)
+        return Z, labels, manager
 
-    # 2. METADATA
-    meta = pd.read_csv(METADATA_PATH)
+    # -----------------------------------------------------
+    # JOINT MODE (STEP 2)
+    # -----------------------------------------------------
+    if mode == "joint":
 
-    # 3. JOIN (CRITICAL STEP)
-    df = meta.merge(audio_df, on="stim_id", how="inner")
+        Z = manager.fit_joint(X_audio, X_groove)
 
-    # 4. GROOVE EMBEDDING
-    df, groove_reducer = run_groove_pipeline(df)
+        labels, _ = cluster_latent_space(Z)
 
-    return {
-        "df": df,
-        "audio_embedding": emb,
-        "groove_reducer": groove_reducer,
-    }
+        return Z, labels, manager
+
+    raise ValueError("Only joint mode implemented in step 2")

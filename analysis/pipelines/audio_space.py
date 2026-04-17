@@ -1,29 +1,12 @@
-import numpy as np
-from analysis.features.mfcc import extract_mfcc
-from analysis.dataset.audio_dataset import load_audio_paths
+from analysis.embeddings.manager import EmbeddingManager
+from analysis.embeddings.clustering import cluster_latent_space
 
 
-def build_audio_embeddings(mp3_dir):
+def run_audio_space(X):
+    manager = EmbeddingManager()
 
-    data = []
+    Z = manager.fit("audio", X)
 
-    for p in load_audio_paths(mp3_dir):
-        try:
-            feat = extract_mfcc(p)
+    labels, _ = cluster_latent_space(Z)
 
-            if feat is None:
-                continue
-
-            stim_id = p.split("/")[-1].replace(".mp3", "")
-
-            data.append((stim_id, p, feat))
-
-        except Exception as e:
-            print(f"[WARN] MFCC failed: {p} -> {e}")
-
-    if not data:
-        raise ValueError("No audio features extracted.")
-
-    stim_ids, paths, vectors = zip(*data)
-
-    return np.vstack(vectors), list(stim_ids), list(paths)
+    return Z, labels

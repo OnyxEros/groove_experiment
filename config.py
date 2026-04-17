@@ -59,3 +59,15 @@ SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 def ensure_data_dirs():
     for d in [DATA_DIR, MIDI_DIR, WAV_DIR, MP3_DIR, ANALYSIS_DIR]:
         d.mkdir(parents=True, exist_ok=True)
+
+# =========================================================
+# UMAP CONFIG (EMBEDDINGS)
+# =========================================================
+
+UMAP_CONFIG = {
+    "n_components": 3,
+    "n_neighbors": 25,
+    "min_dist": 0.08,
+    "metric": "cosine",
+    "random_state": 42,
+}
