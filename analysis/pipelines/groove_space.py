@@ -1,17 +1,17 @@
-import pandas as pd
-from analysis.embeddings.groove import compute_umap_groove
+from analysis.embeddings.manager import EmbeddingManager
+from analysis.embeddings.clustering import cluster_latent_space
+import numpy as np
 
 
-def run_groove_pipeline(df, save=True):
+def run_groove_space(df):
+    manager = EmbeddingManager()
 
-    if df.empty:
-        raise ValueError("Empty dataset")
+    FEATURES = ["D", "V", "S_real"]
 
-    emb, reducer = compute_umap_groove(df)
+    X = df[FEATURES].values.astype(np.float32)
 
-    df = df.copy()
-    df["u1"] = emb[:, 0]
-    df["u2"] = emb[:, 1]
-    df["u3"] = emb[:, 2]
+    Z = manager.fit("groove", X)
 
-    return df, reducer
+    labels, _ = cluster_latent_space(Z)
+
+    return Z, labels

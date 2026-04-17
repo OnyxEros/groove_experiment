@@ -15,24 +15,25 @@ help:
 	@echo "🎧 Groove Experiment System"
 	@echo ""
 	@echo "Core pipeline:"
-	@echo "  make run         → generate dataset (MIDI + audio + metadata)"
-	@echo "  make fast        → quick generation (no audio rendering)"
-	@echo "  make analysis    → UMAP embedding (audio + groove space)"
-	@echo "  make sync        → push dataset to Supabase"
-	@echo "  make regression  → train perceptual model"
+	@echo "  make run         → full generation (MIDI + audio + dataset)"
+	@echo "  make fast        → generation sans audio"
+	@echo "  make analysis    → analyse UMAP / pipeline audio"
+	@echo "  make sync        → sync dataset vers Supabase"
+	@echo "  make regression  → train modèle de régression"
+	@echo "  make perception  → perceptual alignment (NEW)"
 	@echo ""
 	@echo "Full pipeline:"
-	@echo "  make all         → full generation + analysis + sync"
-	@echo "  make reset       → clean + rebuild everything"
+	@echo "  make all         → clean + full pipeline + sync + perception"
+	@echo "  make reset       → rebuild complet"
 	@echo ""
 	@echo "Interface:"
+	@echo "  make serve       → backend FastAPI"
 	@echo "  make ui          → Streamlit explorer"
-	@echo "  make serve       → FastAPI backend"
-	@echo "  make experiment  → full stack (API + UI)"
+	@echo "  make experiment  → backend + UI"
 	@echo ""
 	@echo "Maintenance:"
-	@echo "  make clean       → remove generated data"
-	@echo "  make clean-cache → remove pycache files"
+	@echo "  make clean       → delete generated data"
+	@echo "  make clean-cache → remove __pycache__"
 	@echo ""
 
 
@@ -44,7 +45,7 @@ setup:
 
 
 # =========================================================
-# PIPELINE (GENERATION)
+# PIPELINE
 # =========================================================
 run:
 	$(PYTHON) cli.py --repeats $(REPEATS) --seed $(SEED)
@@ -52,15 +53,25 @@ run:
 fast:
 	$(PYTHON) cli.py --repeats 4 --seed $(SEED) --skip-audio
 
+
+# full clean + run + analysis + sync + perception
 all:
 	$(PYTHON) cli.py --clean
 	$(PYTHON) cli.py --repeats $(REPEATS) --seed $(SEED)
 	$(PYTHON) cli.py --analysis
 	$(PYTHON) cli.py --sync
+	$(PYTHON) cli.py --perception
 
+
+
+paper:
+	$(PYTHON) cli.py --analysis
+	$(PYTHON) cli.py --perception
+	$(PYTHON) cli.py --regression
+	$(PYTHON) cli.py export-figures
 
 # =========================================================
-# ANALYSIS (UMAP)
+# ANALYSIS
 # =========================================================
 analysis:
 	$(PYTHON) cli.py --analysis-only
@@ -81,6 +92,13 @@ regression:
 
 
 # =========================================================
+# PERCEPTION (NEW)
+# =========================================================
+perception:
+	$(PYTHON) cli.py --perception
+
+
+# =========================================================
 # BACKEND
 # =========================================================
 serve:
@@ -98,11 +116,9 @@ ui:
 # FULL STACK DEV MODE
 # =========================================================
 experiment:
-	@echo "🚀 Starting full system..."
-	@echo "1/ FastAPI backend..."
+	@echo "🚀 Starting system..."
 	@$(PYTHON) run_server.py &
 	@sleep 2
-	@echo "2/ Streamlit UI..."
 	@streamlit run analysis/explorer/app.py
 
 
@@ -117,18 +133,19 @@ clean-cache:
 
 
 # =========================================================
-# RESET (SAFE FULL REBUILD)
+# RESET
 # =========================================================
 reset:
-	@echo "🧹 Full reset pipeline..."
+	@echo "🧹 Full reset..."
 	$(PYTHON) cli.py --clean
 	$(PYTHON) cli.py --repeats $(REPEATS) --seed $(SEED)
 	$(PYTHON) cli.py --analysis
 	$(PYTHON) cli.py --sync
 	$(PYTHON) cli.py --regression
+	$(PYTHON) cli.py --perception
 
 
 # =========================================================
 # PHONY
 # =========================================================
-.PHONY: help setup run fast all analysis sync regression serve ui experiment clean reset
+.PHONY: help setup run fast all analysis sync regression perception serve ui experiment clean clean-cache reset

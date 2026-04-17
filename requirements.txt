@@ -8,6 +8,7 @@ plotly
 
 scikit-learn
 umap-learn
+hdbscan
 
 librosa
 pretty_midi

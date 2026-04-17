@@ -34,4 +34,9 @@ def build_audio_embeddings(mp3_dir):
 
     paths, vectors = zip(*data)
 
-    return np.vstack(vectors), list(paths)
+    stim_ids = [
+        os.path.splitext(os.path.basename(p))[0]
+        for p in paths
+    ]
+
+    return np.vstack(vectors), list(stim_ids), list(paths)
