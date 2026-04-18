@@ -4,55 +4,22 @@ import shutil
 from pathlib import Path
 
 # =========================================================
-# CONFIG
+# CONFIG (SAFE IMPORTS ONLY)
 # =========================================================
 from config import (
     ensure_data_dirs,
     MIDI_DIR,
     WAV_DIR,
     MP3_DIR,
+    PREVIEW_DIR,
     METADATA_PATH,
     SOUNDFONT_PATH,
 )
 
 # =========================================================
-# GENERATION
-# =========================================================
-from groove.generator import run_experiment
-from audio.midi_export import export_all
-from audio.mp3 import convert_all, build_audio_map
-
-# =========================================================
-# ANALYSIS
-# =========================================================
-from analysis.pipelines.full_analysis import run_full_analysis
-
-# =========================================================
-# LOCAL DATASET
-# =========================================================
-from backend.dataset import load_dataset as load_local_dataset
-
-# =========================================================
-# SUPABASE
-# =========================================================
-from infra.supabase_client import get_supabase
-
-# =========================================================
-# REGRESSION
-# =========================================================
-from regression.run import run_regression
-
-# =========================================================
-# PERCEPTION (NEW)
-# =========================================================
-from perception.loader import load_perceptual_dataset
-from perception.alignment import fit_alignment
-from perception.metrics import cluster_perception_diff
-
-
-# =========================================================
 # UTILS
 # =========================================================
+
 def log(msg):
     print(f"\n{msg}\n")
 
@@ -63,12 +30,13 @@ def safe_exit(msg, code=1):
 
 
 # =========================================================
-# CLEAN
+# CLEAN (NO HEAVY IMPORTS)
 # =========================================================
+
 def clean():
     log("🧹 Cleaning outputs...")
 
-    for d in [MIDI_DIR, WAV_DIR, MP3_DIR]:
+    for d in [MIDI_DIR, WAV_DIR, MP3_DIR, PREVIEW_DIR]:
         if d.exists():
             shutil.rmtree(d)
 
@@ -79,86 +47,118 @@ def clean():
 
 
 # =========================================================
-# PIPELINE STEPS
+# GENERATION PIPELINE
 # =========================================================
-def step_generate(seed, n_repeats):
+
+def run_generation(seed, n_repeats, skip_audio=False):
+
+    from groove.generator import run_experiment
+    from audio.midi_export import export_all
+    from audio.mp3 import convert_all, build_audio_map
+
+    ensure_data_dirs()
+
     log("🎛️ Generating stimuli...")
-    return run_experiment(seed=seed, n_repeats=n_repeats)
+    df, stim_cache = run_experiment(seed=seed, n_repeats=n_repeats)
 
-
-def step_midi(df, stim_cache):
     log("🎼 Exporting MIDI...")
     export_all(df, stim_cache, out_dir=MIDI_DIR)
 
+    if not skip_audio:
+        log("🎧 Rendering audio...")
 
-def step_audio():
-    log("🎧 Rendering audio...")
+        if not Path(SOUNDFONT_PATH).exists():
+            safe_exit(f"SoundFont not found: {SOUNDFONT_PATH}")
 
-    if not Path(SOUNDFONT_PATH).exists():
-        safe_exit(f"SoundFont not found: {SOUNDFONT_PATH}")
+        convert_all(
+            midi_root=MIDI_DIR,
+            wav_root=WAV_DIR,
+            mp3_root=MP3_DIR,
+            soundfont=str(SOUNDFONT_PATH),
+        )
 
-    convert_all(
-        midi_root=MIDI_DIR,
-        wav_root=WAV_DIR,
-        mp3_root=MP3_DIR,
-        soundfont=str(SOUNDFONT_PATH),
-    )
-
-
-def step_dataset(df):
     log("📊 Building dataset...")
-
     df = build_audio_map(df, mp3_root=MP3_DIR)
 
     METADATA_PATH.parent.mkdir(parents=True, exist_ok=True)
     df.to_csv(METADATA_PATH, index=False)
 
-    log(f"✔ Dataset saved → {METADATA_PATH}")
+    log(f"✔ Generation complete → {len(df)} stimuli")
 
     return df
 
 
-def step_analysis():
-    log("🧠 Running full analysis pipeline...")
+# =========================================================
+# ANALYSIS (STRICT READ ONLY)
+# =========================================================
 
-    if not MP3_DIR.exists():
-        safe_exit("MP3 directory not found. Run full pipeline first.")
+def run_analysis(steps=None, mode="audio"):
 
-    return run_full_analysis(mp3_dir=MP3_DIR, save=True)
+    from analysis.dataset.loader import load_dataset
+    from analysis.pipelines.full_analysis import run_full_analysis
 
+    print("🧠 Loading dataset...")
+
+    df, X = load_dataset()
+
+    return run_full_analysis(
+        df=df,
+        X=X,
+        mode=mode,
+        steps=steps,
+        save=True
+    )
 
 # =========================================================
-# SUPABASE SYNC
+# SUPABASE SYNC (LAZY IMPORT)
 # =========================================================
-def step_sync_supabase():
+
+def sync_supabase():
+
+    from backend.dataset import load_dataset
+    from infra.supabase_client import get_supabase
+
     log("☁️ Syncing to Supabase...")
 
-    df = load_local_dataset()
+    df = load_dataset()
     supabase = get_supabase()
 
-    supabase.table("stimuli").upsert(df.to_dict(orient="records")).execute()
+    supabase.table("stimuli").upsert(
+        df.to_dict(orient="records")
+    ).execute()
 
     log(f"✔ Synced {len(df)} rows")
 
 
 # =========================================================
-# REGRESSION
+# REGRESSION (LAZY)
 # =========================================================
-def step_regression():
-    log("📈 Running regression model...")
 
+def run_regression_step():
+
+    from regression.run import run_regression
+
+    log("📈 Running regression...")
     return run_regression()
 
 
 # =========================================================
-# PERCEPTION PIPELINE (NEW)
+# PERCEPTION (LAZY + ISOLATED)
 # =========================================================
-def step_perception():
-    log("🧠 Loading embeddings + perception data...")
 
-    Z, stimulus_ids = load_local_dataset(return_embeddings=True)
+def run_perception():
 
-    df = __import__("pandas").DataFrame(Z, columns=["z1", "z2", "z3"])
+    from backend.dataset import load_dataset
+    import pandas as pd
+    from perception.loader import load_perceptual_dataset
+    from perception.alignment import fit_alignment
+    from perception.metrics import cluster_perception_diff
+
+    log("🧠 Running perception pipeline...")
+
+    Z, stimulus_ids = load_dataset(return_embeddings=True)
+
+    df = pd.DataFrame(Z, columns=["z1", "z2", "z3"])
     df["stimulus_id"] = stimulus_ids
 
     df = load_perceptual_dataset(df)
@@ -166,101 +166,150 @@ def step_perception():
     Z = df[["z1", "z2", "z3"]].values
     ratings = df["rating"].values
 
-    log("🎯 Fitting perceptual alignment...")
-
     model, score = fit_alignment(Z, ratings)
 
-    print("\n📊 Perceptual alignment R²:")
-    print(score)
+    print("\n📊 Perceptual alignment R²:", score)
 
-    # cluster insight optional (if available)
     if "cluster" in df.columns:
         scores = cluster_perception_diff(df["cluster"].values, ratings)
-        print("\n📦 Cluster perception:")
-        print(scores)
+        print("\n📦 Cluster perception:", scores)
 
     return model, score
 
 
 # =========================================================
-# FULL PIPELINE
+# PREVIEW
 # =========================================================
-def run_full(seed=42, n_repeats=8, skip_audio=False):
-    ensure_data_dirs()
 
-    df, stim_cache = step_generate(seed, n_repeats)
+def preview(seed=42):
 
-    step_midi(df, stim_cache)
+    from groove.generator import Grid, Voices, MicroTiming, Stimulus
+    from audio.midi_export import export_all
+    from audio.mp3 import convert_all
 
-    if not skip_audio:
-        step_audio()
-    else:
-        log("⚠️ Skipping audio rendering")
+    import numpy as np
+    import pandas as pd
 
-    df = step_dataset(df)
+    log("🎧 Preview mode...")
 
-    log(f"✔ Pipeline complete → {len(df)} stimuli")
+    grid = Grid()
+    voices = Voices(grid, seed=seed)
+    rng = np.random.default_rng(seed)
+    micro = MicroTiming(rng, grid.step_duration)
 
-    return df
+    stim_builder = Stimulus(voices, micro)
+
+    configs = [
+        {"name": "baseline", "S_mv": 0, "D_mv": 1, "E": 0.0},
+        {"name": "swing", "S_mv": 0, "D_mv": 1, "E": 0.5},
+        {"name": "syncopated", "S_mv": 2, "D_mv": 1, "E": 0.0},
+    ]
+
+    rows = []
+    cache = {}
+
+    for i, cfg in enumerate(configs):
+        stim = stim_builder.build(cfg, seed + i)
+        cache[i] = stim
+
+        rows.append({
+            "id": i,
+            "label": cfg["name"],
+            **cfg
+        })
+
+    df = pd.DataFrame(rows)
+
+    PREVIEW_DIR.mkdir(parents=True, exist_ok=True)
+
+    export_all(df, cache, out_dir=PREVIEW_DIR)
+
+    convert_all(
+        midi_root=PREVIEW_DIR,
+        wav_root=PREVIEW_DIR / "wav",
+        mp3_root=PREVIEW_DIR / "mp3",
+        soundfont=str(SOUNDFONT_PATH),
+    )
+
+    log("✔ Preview ready")
 
 
 # =========================================================
 # MAIN
 # =========================================================
+
 def main():
-    parser = argparse.ArgumentParser(description="🎧 Groove Experiment CLI")
 
-    parser.add_argument("--clean", action="store_true")
-    parser.add_argument("--repeats", type=int, default=8)
-    parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--skip-audio", action="store_true")
+    parser = argparse.ArgumentParser("🎧 Groove CLI (PRO refactored)")
 
+    parser.add_argument("--generate", action="store_true")
     parser.add_argument("--analysis", action="store_true")
     parser.add_argument("--analysis-only", action="store_true")
+    parser.add_argument("--preview", action="store_true")
+
+    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--repeats", type=int, default=None)
+    parser.add_argument("--skip-audio", action="store_true")
 
     parser.add_argument("--sync", action="store_true")
     parser.add_argument("--regression", action="store_true")
     parser.add_argument("--perception", action="store_true")
 
+    parser.add_argument("--analysis-mode", default="audio", choices=["audio", "groove"])
+    parser.add_argument("--steps", nargs="+")
+
+    parser.add_argument("--clean", action="store_true")
+
     args = parser.parse_args()
 
-    # CLEAN
+    # =====================================================
+    # CLEAN (NO IMPORT SIDE EFFECTS)
+    # =====================================================
     if args.clean:
         clean()
         return
 
-    # ANALYSIS ONLY
-    if args.analysis_only:
-        log("📂 Loading dataset...")
-        load_local_dataset()
-        step_analysis()
+    # =====================================================
+    # PREVIEW
+    # =====================================================
+    if args.preview:
+        ensure_data_dirs()
+        preview(seed=args.seed)
         return
 
-    # FULL PIPELINE
-    df = run_full(
-        seed=args.seed,
-        n_repeats=args.repeats,
-        skip_audio=args.skip_audio,
-    )
+    # =====================================================
+    # GENERATION ONLY
+    # =====================================================
+    if args.generate:
+        run_generation(
+            seed=args.seed,
+            n_repeats=args.repeats,
+            skip_audio=args.skip_audio
+        )
 
+    # =====================================================
+    # ANALYSIS ONLY (READ-ONLY)
+    # =====================================================
+    if args.analysis or args.analysis_only:
+        run_analysis(
+            steps=args.steps,
+            mode=args.analysis_mode
+        )
+
+    # =====================================================
     # OPTIONAL STEPS
-    if args.analysis:
-        step_analysis()
-
+    # =====================================================
     if args.sync:
-        step_sync_supabase()
+        sync_supabase()
 
     if args.regression:
-        step_regression()
+        run_regression_step()
 
     if args.perception:
-        step_perception()
+        run_perception()
 
-    print("\n🔥 READY\n")
+    print("\n🔥 DONE\n")
 
 
-# =========================================================
-# ENTRYPOINT
-# =========================================================
 if __name__ == "__main__":
     main()

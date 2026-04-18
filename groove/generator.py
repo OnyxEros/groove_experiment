@@ -1,31 +1,33 @@
-# =========================
-# CORE
-# =========================
-
 import numpy as np
 import itertools
 import pandas as pd
 
+import config
 
-# =========================
+
+# =========================================================
 # GRID
-# =========================
+# =========================================================
 
 class Grid:
-    def __init__(self, n_steps=16, bpm=120, subdivision=4, bars=8):
-        self.n_steps = n_steps * bars
-        self.bpm = bpm
-        self.subdivision = subdivision
-        self.step_duration = 60 / (bpm * subdivision)
+    def __init__(self):
+        self.steps_per_bar = config.STEPS_PER_BAR
+        self.n_steps = self.steps_per_bar * config.BARS
+
+        self.bpm = config.BPM
+
+        # durée d'un step
+        self.step_duration = 60 / (self.bpm * (self.steps_per_bar / 4))
 
 
-# =========================
+# =========================================================
 # VOICES
-# =========================
+# =========================================================
 
 class Voices:
-    def __init__(self, n_steps=16, seed=None):
-        self.n_steps = n_steps
+    def __init__(self, grid: Grid, seed=None):
+        self.n_steps = grid.n_steps
+        self.steps_per_bar = grid.steps_per_bar
         self.rng = np.random.default_rng(seed)
 
     def empty(self):
@@ -33,27 +35,23 @@ class Voices:
 
     def kick(self):
         p = self.empty()
+        bar = self.steps_per_bar
 
-        bar = 16
-        n_bars = self.n_steps // bar
-
-        for b in range(n_bars):
-            offset = b * bar
-            p[offset + 0] = 1
-            p[offset + 8] = 1
+        for b in range(self.n_steps // bar):
+            o = b * bar
+            p[o] = 1
+            p[o + bar // 2] = 1
 
         return p
 
     def snare(self):
         p = self.empty()
+        bar = self.steps_per_bar
 
-        bar = 16
-        n_bars = self.n_steps // bar
-
-        for b in range(n_bars):
-            offset = b * bar
-            p[offset + 4] = 1
-            p[offset + 12] = 1
+        for b in range(self.n_steps // bar):
+            o = b * bar
+            p[o + bar // 4] = 1
+            p[o + 3 * bar // 4] = 1
 
         return p
 
@@ -62,98 +60,117 @@ class Voices:
         rng = np.random.default_rng(seed)
         p = self.empty()
 
-        density_map = {0: 0.3, 1: 0.55, 2: 0.75}
-        target_density = density_map.get(density_level, 0.55)
+        # D_mv contrôle directement la probabilité de tirage
+        density_map = {0: 0.3, 1: 0.5, 2: 0.7}
+        base_prob = density_map.get(density_level, 0.5)
 
-        cycle = 16
-        n_cycles = self.n_steps // cycle
+        pattern = np.zeros(self.steps_per_bar)
+        pattern[::2] = 1  # 8th notes
 
-        base_pattern = np.tile([1, 0, 1, 0], 4)
+        for i in range(self.n_steps):
 
-        for bar in range(n_cycles):
+            base = pattern[i % self.steps_per_bar]
+            prob = base_prob
 
-            offset = bar * cycle
+            if sync_level == 1:
+                prob *= (0.7 if i % 4 == 0 else 1.0)
+            elif sync_level == 2:
+                prob *= (1.2 if i % 3 == 0 else 0.8)
 
-            for i in range(cycle):
+            if base == 1:
+                prob *= 1.4
 
-                idx = offset + i
-                if idx >= self.n_steps:
-                    continue
-
-                if sync_level == 0:
-                    prob = target_density
-                elif sync_level == 1:
-                    prob = target_density * (0.7 if i % 4 == 0 else 1.0)
-                else:
-                    prob = target_density * (1.2 if i % 3 == 0 else 0.8)
-
-                if base_pattern[i % len(base_pattern)] == 1:
-                    prob += 0.2
-
-                if rng.random() < prob:
-                    p[idx] = 1
+            if rng.random() < prob:
+                p[i] = 1
 
         return p
 
 
-# =========================
-# MICRO TIMING
-# =========================
+# =========================================================
+# MICRO TIMING (CORRIGÉ)
+# =========================================================
 
 class MicroTiming:
     def __init__(self, rng, step_duration):
         self.rng = rng
         self.step_duration = step_duration
 
-    def apply(self, pattern, amount=0.0, mode="gaussian", voice_weight=1.0):
+    def apply(self, pattern, amount=0.0, voice_weight=1.0):
 
-        if amount == 0 or mode == "none":
+        if amount <= 0:
             return np.zeros(len(pattern))
 
-        jitters = np.zeros(len(pattern))
+        n = len(pattern)
+        jitters = np.zeros(n)
         hits = np.where(pattern == 1)[0]
 
+        # =====================================================
+        # 1. SWING MUSICAL (offbeat réel)
+        # =====================================================
+
+        swing_strength = 0.12 * amount  # max 12% du step
+        swing = np.zeros(n)
+
+        for i in range(n):
+            if (i % 4) == 2:  # offbeat (16th grid)
+                swing[i] = swing_strength * self.step_duration
+
+        # =====================================================
+        # 2. DRIFT LENT (contrôlé)
+        # =====================================================
+
+        freq = 1.0 / (n * 2)  # variation lente sur 2 cycles
+        phase = self.rng.uniform(0, 2 * np.pi)
+
+        drift = np.sin(2 * np.pi * freq * np.arange(n) + phase)
+        drift *= 0.1 * amount * self.step_duration
+
+        # =====================================================
+        # 3. BRUIT LOCAL CORRÉLÉ (léger)
+        # =====================================================
+
+        sigma = 0.1 * amount * self.step_duration
+        noise = self.rng.normal(0, sigma, size=n)
+
+        kernel = np.array([0.25, 0.5, 0.25])
+        noise = np.convolve(noise, kernel, mode="same")
+
+        # =====================================================
+        # COMBINAISON
+        # =====================================================
+
+        total_shift = swing + drift + noise
+
         for i in hits:
-
-            bar_drift = self.rng.normal(0, amount) * self.step_duration
-            local = self.rng.normal(0, amount * 0.2) * self.step_duration
-
-            jitter = (bar_drift + local) * voice_weight
-
-            jitters[i] = np.clip(
-                jitter,
-                -0.4 * self.step_duration,
-                0.4 * self.step_duration
-            )
+            jitters[i] = total_shift[i] * voice_weight
 
         return jitters
 
 
-# =========================
+# =========================================================
 # STIMULUS
-# =========================
+# =========================================================
 
 class Stimulus:
     def __init__(self, voices, micro):
         self.voices = voices
         self.micro = micro
 
-    def build(self, config, seed=None):
-
-        rng_seed = seed if seed is not None else 0
+    def build(self, cfg, seed):
 
         kick = self.voices.kick()
         snare = self.voices.snare()
 
         hihat = self.voices.hihat(
-            sync_level=config["S_mv"],
-            density_level=config["D_mv"],
-            seed=rng_seed
+            sync_level=cfg["S_mv"],
+            density_level=cfg["D_mv"],
+            seed=seed
         )
 
-        kick_j = self.micro.apply(kick, config["E"], config["micro_mode"], 0.5)
-        snare_j = self.micro.apply(snare, config["E"], config["micro_mode"], 0.7)
-        hihat_j = self.micro.apply(hihat, config["E"], config["micro_mode"], 1.0)
+        # 🔥 hiérarchie musicale respectée
+        kick_j = self.micro.apply(kick, cfg["E"] * 0.2, 0.3)
+        snare_j = self.micro.apply(snare, cfg["E"] * 0.3, 0.5)
+        hihat_j = self.micro.apply(hihat, cfg["E"], 1.0)
 
         return {
             "kick": kick,
@@ -162,13 +179,13 @@ class Stimulus:
             "kick_jitter": kick_j,
             "snare_jitter": snare_j,
             "hihat_jitter": hihat_j,
-            "config": config
+            "config": cfg
         }
 
 
-# =========================
+# =========================================================
 # METRICS
-# =========================
+# =========================================================
 
 class Metrics:
 
@@ -180,19 +197,32 @@ class Metrics:
         )
 
     def micro_V(self, stim):
-        jitters = []
+        vals = []
 
         for v in ["kick", "snare", "hihat"]:
-            mask = stim[v] == 1
-            jitters.extend(stim[f"{v}_jitter"][mask])
+            vals.extend(stim[f"{v}_jitter"][stim[v] == 1])
 
-        return np.var(jitters) if len(jitters) > 0 else 0.0
+        return np.var(vals) if len(vals) > 0 else 0.0
 
     def syncopation_index(self, pattern):
-        weights = np.tile([3, 1, 2, 1], len(pattern) // 4)
+        n = len(pattern)
 
-        weights = np.where(weights == 0, 1, weights)
-        return np.mean(pattern / weights)
+        # hiérarchie métrique simple (4/4 en 16 steps)
+        metric_profile = np.array([
+            1.0, 0.2, 0.6, 0.2,
+            0.8, 0.2, 0.5, 0.2,
+            0.9, 0.2, 0.6, 0.2,
+            0.7, 0.2, 0.5, 0.2
+        ])
+
+        metric_profile = np.tile(metric_profile, n // config.STEPS_PER_BAR)
+
+        # attente = proba métrique normalisée
+        p = metric_profile / np.max(metric_profile)
+
+        # coût syncopation = écart à l'attendu
+        return np.mean(np.abs(pattern - p))
+
 
     def inter_voice_variance(self, stim):
         densities = [
@@ -203,80 +233,94 @@ class Metrics:
         return np.var(densities)
 
 
-# =========================
+    def micro_E(self, stim):
+        vals = []
+
+        for v in ["kick", "snare", "hihat"]:
+            vals.extend(np.abs(stim[f"{v}_jitter"][stim[v] == 1]))
+
+        return np.mean(vals) if len(vals) > 0 else 0.0
+
+
+# =========================================================
 # DESIGN
-# =========================
+# =========================================================
 
-def build_design(seed=42, n_repeats=8):
+def build_design(n_repeats=None):
 
-    S_levels = [0, 1, 2]
-    D_levels = [0, 1, 2]
-    E_levels = [0.0, 0.5, 1.0]
+    repeats = config.REPEATS if n_repeats is None else n_repeats
 
     base = []
 
     base += [
-        {"phase": 1, "S_mv": S, "D_mv": 1, "E": 0.0, "micro_mode": "none"}
-        for S in S_levels
+        {"phase": 1, "S_mv": s, "D_mv": 1, "E": 0.0}
+        for s in config.S_LEVELS
     ]
 
     base += [
-        {"phase": 2, "S_mv": 1, "D_mv": 1, "E": E, "micro_mode": "gaussian"}
-        for E in E_levels
+        {"phase": 2, "S_mv": 1, "D_mv": 1, "E": e}
+        for e in config.E_LEVELS
     ]
 
     base += [
-        {"phase": 3, "S_mv": S, "D_mv": D, "E": E, "micro_mode": "gaussian"}
-        for S, D, E in itertools.product(S_levels, D_levels, E_levels)
+        {"phase": 3, "S_mv": s, "D_mv": d, "E": e}
+        for s, d, e in itertools.product(
+            config.S_LEVELS,
+            config.D_LEVELS,
+            config.E_LEVELS
+        )
     ]
 
     expanded = []
     for d in base:
-        for r in range(n_repeats):
-            d2 = d.copy()
-            d2["repeat"] = r
-            expanded.append(d2)
+        for r in range(repeats):
+            expanded.append({**d, "repeat": r})
 
     return expanded
 
 
-# =========================
-# PIPELINE
-# =========================
+# =========================================================
+# EXPERIMENT
+# =========================================================
 
-def run_experiment(seed=42, n_repeats=8):
+def run_experiment(seed=None, n_repeats=None):
 
+    seed = config.SEED if seed is None else seed
     rng = np.random.default_rng(seed)
 
     grid = Grid()
-    voices = Voices(seed=seed)
+    voices = Voices(grid, seed=seed)
     micro = MicroTiming(rng, grid.step_duration)
+
     stim_builder = Stimulus(voices, micro)
     metrics = Metrics()
 
-    design = build_design(seed, n_repeats)
+    design = build_design(n_repeats=n_repeats)
     rng.shuffle(design)
 
     rows = []
-    stim_cache = {}
+    cache = {}
 
-    for i, config in enumerate(design):
+    for i, cfg in enumerate(design):
 
-        stim = stim_builder.build(config, seed=seed + i)
-        stim_cache[i] = stim
+        stim = stim_builder.build(cfg, seed + i)
+        cache[i] = stim
 
         rows.append({
             "id": i,
-            "phase": config["phase"],
-            "repeat": config["repeat"],
-            "S_mv": config["S_mv"],
-            "D_mv": config["D_mv"],
-            "E": config["E"],
+            "phase": cfg["phase"],
+            "repeat": cfg["repeat"],
+            "S_mv": cfg["S_mv"],
+            "D_mv": cfg["D_mv"],
+            "E": cfg["E"],
+
             "D": metrics.global_density(stim),
             "I": metrics.inter_voice_variance(stim),
             "V": metrics.micro_V(stim),
             "S_real": metrics.syncopation_index(stim["hihat"]),
+            "E_real": metrics.micro_E(stim),
+
             "BPM": grid.bpm
         })
 
-    return pd.DataFrame(rows), stim_cache
+    return pd.DataFrame(rows), cache

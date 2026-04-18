@@ -5,3 +5,4 @@ data/wav/
 data/midi/
 .DS_Store
 soundfont.sf2
+data/preview/

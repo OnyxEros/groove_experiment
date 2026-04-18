@@ -3,149 +3,158 @@
 # =========================================================
 
 PYTHON=python
-REPEATS=8
 SEED=42
+REPEATS=8
+
+# analysis steps (safe default)
+STEPS=embedding clustering viz
 
 
 # =========================================================
 # HELP
 # =========================================================
+
 help:
 	@echo ""
-	@echo "🎧 Groove Experiment System"
+	@echo "🎧 GROOVE EXPERIMENT SYSTEM"
+	@echo "==========================="
 	@echo ""
-	@echo "Core pipeline:"
-	@echo "  make run         → full generation (MIDI + audio + dataset)"
-	@echo "  make fast        → generation sans audio"
-	@echo "  make analysis    → analyse UMAP / pipeline audio"
-	@echo "  make sync        → sync dataset vers Supabase"
-	@echo "  make regression  → train modèle de régression"
-	@echo "  make perception  → perceptual alignment (NEW)"
+	@echo "📦 DATA PIPELINE"
+	@echo "----------------"
+	@echo "make generate        → full generation pipeline (MIDI + audio + dataset)"
+	@echo "make fast            → generation without audio rendering"
+	@echo "make clean           → delete generated data"
+	@echo "make preview         → test stimulus generator"
 	@echo ""
-	@echo "Full pipeline:"
-	@echo "  make all         → clean + full pipeline + sync + perception"
-	@echo "  make reset       → rebuild complet"
+	@echo "🧠 ANALYSIS (READ ONLY)"
+	@echo "----------------------"
+	@echo "make analysis        → full analysis pipeline"
+	@echo "make analysis-light  → embeddings only"
+	@echo "make analysis-cluster→ embeddings + clustering"
+	@echo "make analysis-viz    → embeddings + visualization"
 	@echo ""
-	@echo "Interface:"
-	@echo "  make serve       → backend FastAPI"
-	@echo "  make ui          → Streamlit explorer"
-	@echo "  make experiment  → backend + UI"
+	@echo "📊 MODELING"
+	@echo "----------"
+	@echo "make regression      → train regression model"
+	@echo "make perception      → perceptual alignment"
 	@echo ""
-	@echo "Maintenance:"
-	@echo "  make clean       → delete generated data"
-	@echo "  make clean-cache → remove __pycache__"
+	@echo "☁️ INFRA"
+	@echo "--------"
+	@echo "make sync            → sync dataset to Supabase"
+	@echo "make serve           → backend API"
+	@echo "make ui              → Streamlit explorer"
+	@echo ""
+	@echo "🚀 FULL PIPELINE"
+	@echo "--------------"
+	@echo "make all             → full rebuild pipeline"
+	@echo "make paper           → research pipeline"
+	@echo ""
+	@echo "⚙️ CONFIG"
+	@echo "--------"
+	@echo "SEED=$(SEED) REPEATS=$(REPEATS)"
 	@echo ""
 
 
 # =========================================================
 # SETUP
 # =========================================================
+
 setup:
 	$(PYTHON) setup.py
 
 
 # =========================================================
-# PIPELINE
+# DATA PIPELINE (GENERATION ONLY)
 # =========================================================
-run:
-	$(PYTHON) cli.py --repeats $(REPEATS) --seed $(SEED)
+
+generate:
+	$(PYTHON) cli.py --generate --seed $(SEED) --repeats $(REPEATS)
 
 fast:
-	$(PYTHON) cli.py --repeats 4 --seed $(SEED) --skip-audio
+	$(PYTHON) cli.py --generate --seed $(SEED) --skip-audio
 
-
-# full clean + run + analysis + sync + perception
-all:
+clean:
 	$(PYTHON) cli.py --clean
-	$(PYTHON) cli.py --repeats $(REPEATS) --seed $(SEED)
-	$(PYTHON) cli.py --analysis
-	$(PYTHON) cli.py --sync
-	$(PYTHON) cli.py --perception
 
+preview:
+	$(PYTHON) cli.py --preview
 
-
-paper:
-	$(PYTHON) cli.py --analysis
-	$(PYTHON) cli.py --perception
-	$(PYTHON) cli.py --regression
-	$(PYTHON) cli.py export-figures
 
 # =========================================================
-# ANALYSIS
+# ANALYSIS (NO GENERATION)
 # =========================================================
+
 analysis:
-	$(PYTHON) cli.py --analysis-only
+	$(PYTHON) cli.py --analysis --analysis-mode audio --steps $(STEPS)
+
+analysis-light:
+	$(PYTHON) cli.py --analysis --steps embedding
+
+analysis-cluster:
+	$(PYTHON) cli.py --analysis --steps embedding clustering
+
+analysis-viz:
+	$(PYTHON) cli.py --analysis --steps embedding viz
 
 
 # =========================================================
-# SUPABASE SYNC
+# MODELING
 # =========================================================
-sync:
-	$(PYTHON) cli.py --sync
 
-
-# =========================================================
-# REGRESSION
-# =========================================================
 regression:
 	$(PYTHON) cli.py --regression
 
-
-# =========================================================
-# PERCEPTION (NEW)
-# =========================================================
 perception:
 	$(PYTHON) cli.py --perception
 
 
 # =========================================================
-# BACKEND
+# INFRA
 # =========================================================
+
+sync:
+	$(PYTHON) cli.py --sync
+
 serve:
 	$(PYTHON) run_server.py
 
-
-# =========================================================
-# UI
-# =========================================================
 ui:
 	streamlit run analysis/explorer/app.py
 
 
 # =========================================================
-# FULL STACK DEV MODE
+# FULL PIPELINE
 # =========================================================
+
+all:
+	$(PYTHON) cli.py --clean
+	$(PYTHON) cli.py --generate --seed $(SEED) --repeats $(REPEATS)
+	$(PYTHON) cli.py --analysis --steps $(STEPS)
+	$(PYTHON) cli.py --sync
+	$(PYTHON) cli.py --perception
+
+
+paper:
+	$(PYTHON) cli.py --analysis --steps embedding clustering viz
+	$(PYTHON) cli.py --perception
+	$(PYTHON) cli.py --regression
+
+
+# =========================================================
+# DEV MODE
+# =========================================================
+
 experiment:
-	@echo "🚀 Starting system..."
+	@echo "🚀 Starting full dev system..."
 	@$(PYTHON) run_server.py &
 	@sleep 2
 	@streamlit run analysis/explorer/app.py
 
 
 # =========================================================
-# CLEAN
-# =========================================================
-clean:
-	$(PYTHON) cli.py --clean
-
-clean-cache:
-	$(PYTHON) clean_pycache.py
-
-
-# =========================================================
-# RESET
-# =========================================================
-reset:
-	@echo "🧹 Full reset..."
-	$(PYTHON) cli.py --clean
-	$(PYTHON) cli.py --repeats $(REPEATS) --seed $(SEED)
-	$(PYTHON) cli.py --analysis
-	$(PYTHON) cli.py --sync
-	$(PYTHON) cli.py --regression
-	$(PYTHON) cli.py --perception
-
-
-# =========================================================
 # PHONY
 # =========================================================
-.PHONY: help setup run fast all analysis sync regression perception serve ui experiment clean clean-cache reset
+
+.PHONY: help setup generate fast clean preview \
+        analysis analysis-light analysis-cluster analysis-viz \
+        regression perception sync serve ui all paper experiment

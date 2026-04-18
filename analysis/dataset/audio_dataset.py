@@ -1,42 +1,47 @@
-import os
 import numpy as np
+import pandas as pd
+from concurrent.futures import ProcessPoolExecutor, as_completed
+
+from data.loader import load_audio_paths
 from analysis.features.mfcc import extract_mfcc
 
 
-def load_audio_paths(mp3_dir):
-    paths = [
-        os.path.join(root, f)
-        for root, _, files in os.walk(mp3_dir)
-        for f in files
-        if f.endswith(".mp3")
-    ]
-    return sorted(paths)
+def _process(path):
+    try:
+        feat = extract_mfcc(path)
+        if feat is None:
+            return None
+
+        return path, feat
+
+    except Exception:
+        return None
 
 
-def build_audio_embeddings(mp3_dir):
+def load_dataset(n_jobs=None):
+    paths = load_audio_paths()
 
-    data = []
+    results = []
 
-    for p in load_audio_paths(mp3_dir):
-        try:
-            feat = extract_mfcc(p)
+    with ProcessPoolExecutor(max_workers=n_jobs) as ex:
+        futures = [ex.submit(_process, p) for p in paths]
 
-            if feat is None:
-                continue
+        for f in as_completed(futures):
+            r = f.result()
+            if r:
+                results.append(r)
 
-            data.append((p, feat))
+    if not results:
+        raise ValueError("No features extracted")
 
-        except Exception as e:
-            print(f"[WARN] failed MFCC for {p}: {e}")
+    results.sort(key=lambda x: x[0])
 
-    if not data:
-        raise ValueError("No audio features extracted.")
+    paths = [r[0] for r in results]
+    X = np.vstack([r[1] for r in results])
 
-    paths, vectors = zip(*data)
+    df = pd.DataFrame({
+        "path": paths,
+        "stimulus_id": [os.path.basename(p).split(".")[0] for p in paths]
+    })
 
-    stim_ids = [
-        os.path.splitext(os.path.basename(p))[0]
-        for p in paths
-    ]
-
-    return np.vstack(vectors), list(stim_ids), list(paths)
+    return df, X
