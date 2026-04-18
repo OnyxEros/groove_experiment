@@ -7,105 +7,84 @@ from config import UMAP_CONFIG
 
 class EmbeddingManager:
     """
-    Centralized embedding system for all modalities (audio, groove, joint).
+    Centralized embedding system (paper-safe version)
+
+    Guarantees:
+    - deterministic embeddings
+    - modality separation
+    - reproducibility
     """
 
-    def __init__(self):
+    def __init__(self, random_state=42):
+        self.random_state = random_state
+
         self.scalers = {}
         self.reducers = {}
 
     # =====================================================
-    # SINGLE MODALITY FIT
+    # FIT (TRAIN EMBEDDING SPACE)
     # =====================================================
 
     def fit(self, name: str, X: np.ndarray):
-        """
-        Fit UMAP embedding for a single modality.
-        """
+
+        # ---------------------------
+        # VALIDATION
+        # ---------------------------
         if hasattr(X, "select_dtypes"):
-            raise ValueError(
-                "EmbeddingManager expects numpy array, not DataFrame. "
-                 "Select features BEFORE calling fit()."
-            )
+            raise ValueError("Expected numpy array, not DataFrame")
+
+        if not isinstance(X, np.ndarray):
+            raise TypeError("X must be numpy array")
 
         if X.ndim != 2:
-            raise ValueError("X must be a 2D array (N, D)")
+            raise ValueError("X must be 2D array (N, D)")
 
+        # ---------------------------
+        # NORMALIZATION
+        # ---------------------------
         scaler = StandardScaler()
         Xs = scaler.fit_transform(X)
 
-        reducer = umap.UMAP(**UMAP_CONFIG)
+        # ---------------------------
+        # UMAP (DETERMINISTIC FIX)
+        # ---------------------------
+        reducer = umap.UMAP(
+            **UMAP_CONFIG,
+            random_state=self.random_state,   # 🔥 CRITICAL FIX
+        )
+
         Z = reducer.fit_transform(Xs)
 
+        # ---------------------------
+        # STORE MODELS
+        # ---------------------------
         self.scalers[name] = scaler
         self.reducers[name] = reducer
 
         return Z
 
     # =====================================================
-    # TRANSFORM NEW DATA
+    # TRANSFORM (NEW DATA → SAME SPACE)
     # =====================================================
 
     def transform(self, name: str, X: np.ndarray):
-        """
-        Project new samples into an existing embedding space.
-        """
 
         if name not in self.scalers or name not in self.reducers:
             raise ValueError(f"Model '{name}' not fitted yet")
 
-        scaler = self.scalers[name]
-        reducer = self.reducers[name]
+        if not isinstance(X, np.ndarray):
+            raise TypeError("X must be numpy array")
 
-        Xs = scaler.transform(X)
-        return reducer.transform(Xs)
+        Xs = self.scalers[name].transform(X)
+        return self.reducers[name].transform(Xs)
 
     # =====================================================
-    # JOINT EMBEDDING (AUDIO + GROOVE)
+    # OPTIONAL: REBUILD SAFE (IMPORTANT FOR PAPER)
     # =====================================================
 
-    def fit_joint(self, X_audio: np.ndarray, X_groove: np.ndarray):
+    def fit_from_cache(self, name: str, X: np.ndarray):
         """
-        Build a shared latent space for audio + groove.
-
-        This uses modality encoding to help UMAP distinguish sources.
+        Rebuild embedding deterministically (for analysis reproducibility)
         """
 
-        if X_audio.ndim != 2 or X_groove.ndim != 2:
-            raise ValueError("Inputs must be 2D arrays (N, D)")
-
-        # =====================================================
-        # CONCAT FEATURES
-        # =====================================================
-
-        X = np.vstack([X_audio, X_groove])
-
-        # modality encoding (important for structure separation)
-        modality = np.array(
-            [0] * len(X_audio) + [1] * len(X_groove)
-        ).reshape(-1, 1)
-
-        X = np.hstack([X, modality])
-
-        # =====================================================
-        # SCALE
-        # =====================================================
-
-        scaler = StandardScaler()
-        Xs = scaler.fit_transform(X)
-
-        # =====================================================
-        # UMAP
-        # =====================================================
-
-        reducer = umap.UMAP(**UMAP_CONFIG)
-        Z = reducer.fit_transform(Xs)
-
-        # =====================================================
-        # STORE MODELS
-        # =====================================================
-
-        self.scalers["joint"] = scaler
-        self.reducers["joint"] = reducer
-
-        return Z
+        return self.fit(name, X)
