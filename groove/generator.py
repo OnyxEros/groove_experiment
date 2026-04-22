@@ -320,7 +320,11 @@ def run_experiment(seed=None, n_repeats=None):
             "S_real": metrics.syncopation_index(stim["hihat"]),
             "E_real": metrics.micro_E(stim),
 
-            "BPM": grid.bpm
+            "BPM": grid.bpm,
+
+            "kick": stim["kick"].tolist(),
+            "snare": stim["snare"].tolist(),
+            "hihat": stim["hihat"].tolist(),
         })
 
     return pd.DataFrame(rows), cache
