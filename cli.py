@@ -33,17 +33,77 @@ def safe_exit(msg, code=1):
 # CLEAN (NO HEAVY IMPORTS)
 # =========================================================
 
-def clean():
-    log("🧹 Cleaning outputs...")
-
+def clean_outputs():
+    log("🧹 Cleaning outputs (MIDI/WAV/MP3/PREVIEW)...")
     for d in [MIDI_DIR, WAV_DIR, MP3_DIR, PREVIEW_DIR]:
         if d.exists():
             shutil.rmtree(d)
 
+
+def clean_metadata():
+    log("🧹 Cleaning metadata...")
     if METADATA_PATH.exists():
         METADATA_PATH.unlink()
 
-    log("✔ Clean done")
+
+def clean_analysis(subdirs=None):
+    log("🧹 Cleaning analysis...")
+
+    analysis_dir = Path("data/analysis")
+
+    if not analysis_dir.exists():
+        return
+
+    if subdirs is None:
+        shutil.rmtree(analysis_dir)
+        return
+
+    for sub in subdirs:
+        p = analysis_dir / sub
+        if p.exists():
+            shutil.rmtree(p)
+
+
+def clean_pycache():
+    log("🧹 Cleaning __pycache__...")
+    root = Path(".")
+    for pycache in root.rglob("__pycache__"):
+        try:
+            shutil.rmtree(pycache)
+        except Exception as e:
+            print(f"⚠️ Could not delete {pycache}: {e}")
+
+def clean(levels):
+
+    if not levels:
+        levels = ["all"]
+
+    if "all" in levels:
+        clean_outputs()
+        clean_metadata()
+        clean_analysis()
+        clean_pycache()
+        log("✔ Full clean done")
+        return
+
+    if "outputs" in levels:
+        clean_outputs()
+
+    if "metadata" in levels:
+        clean_metadata()
+
+    if "analysis" in levels:
+        clean_analysis()
+
+    if "cache" in levels:
+        clean_pycache()
+
+    if not levels:
+        levels = ["all"]
+
+    log(f"🧹 Clean targets: {levels}")
+
+    log("✔ Partial clean done")
 
 
 # =========================================================
@@ -254,15 +314,15 @@ def main():
     parser.add_argument("--analysis-mode", default="audio", choices=["full","audio", "groove"])
     parser.add_argument("--steps", nargs="+")
 
-    parser.add_argument("--clean", action="store_true")
+    parser.add_argument("--clean", nargs="*", choices=["all", "outputs", "metadata", "analysis", "cache"],)
 
     args = parser.parse_args()
 
     # =====================================================
     # CLEAN (NO IMPORT SIDE EFFECTS)
     # =====================================================
-    if args.clean:
-        clean()
+    if args.clean is not None:
+        clean(args.clean or ["all"])
         return
 
     # =====================================================
