@@ -6,8 +6,8 @@ PYTHON=python
 SEED=42
 REPEATS=8
 
-# analysis steps (safe default)
-STEPS=embedding clustering viz
+# default full analysis pipeline (NEW SYSTEM)
+STEPS=embeddings projection clustering viz export
 
 
 # =========================================================
@@ -26,12 +26,15 @@ help:
 	@echo "make clean           → delete generated data"
 	@echo "make preview         → test stimulus generator"
 	@echo ""
-	@echo "🧠 ANALYSIS (READ ONLY)"
-	@echo "----------------------"
-	@echo "make analysis        → full analysis pipeline"
-	@echo "make analysis-light  → embeddings only"
-	@echo "make analysis-cluster→ embeddings + clustering"
-	@echo "make analysis-viz    → embeddings + visualization"
+	@echo "🧠 ANALYSIS ENGINE (MODULAR SYSTEM)"
+	@echo "-----------------------------------"
+	@echo "make analysis        → full scientific pipeline (embeddings → clustering → projection → viz → export)"
+	@echo "make analysis mode=audio   → reduced perceptual analysis pipeline"
+	@echo "make analysis mode=groove  → groove-focused interpretation pipeline"
+	@echo "make analysis steps=\"...\"  → custom step pipeline (advanced users)"
+	@echo ""
+	@echo "AVAILABLE STEPS:"
+	@echo "  embeddings projection clustering metrics_view interpretation viz export"
 	@echo ""
 	@echo "📊 MODELING"
 	@echo "----------"
@@ -46,14 +49,13 @@ help:
 	@echo ""
 	@echo "🚀 FULL PIPELINE"
 	@echo "--------------"
-	@echo "make all             → full rebuild pipeline"
-	@echo "make paper           → research pipeline"
+	@echo "make all             → full rebuild pipeline (generate + analysis + sync + perception)"
+	@echo "make paper           → research pipeline (analysis + perception + regression)"
 	@echo ""
 	@echo "⚙️ CONFIG"
 	@echo "--------"
 	@echo "SEED=$(SEED) REPEATS=$(REPEATS)"
 	@echo ""
-
 
 # =========================================================
 # SETUP
@@ -81,20 +83,20 @@ preview:
 
 
 # =========================================================
-# ANALYSIS (NO GENERATION)
+# ANALYSIS (ENGINE-BASED SYSTEM)
 # =========================================================
 
 analysis:
-	$(PYTHON) cli.py --analysis --analysis-mode audio --steps $(STEPS)
+	$(PYTHON) cli.py --analysis --analysis-mode full
 
 analysis-light:
-	$(PYTHON) cli.py --analysis --steps embedding
+	$(PYTHON) cli.py --analysis --analysis-mode audio
 
 analysis-cluster:
-	$(PYTHON) cli.py --analysis --steps embedding clustering
+	$(PYTHON) cli.py --analysis --steps embeddings clustering interpretation viz export
 
 analysis-viz:
-	$(PYTHON) cli.py --analysis --steps embedding viz
+	$(PYTHON) cli.py --analysis --steps embeddings projection viz export
 
 
 # =========================================================
@@ -129,16 +131,15 @@ ui:
 all:
 	$(PYTHON) cli.py --clean
 	$(PYTHON) cli.py --generate --seed $(SEED) --repeats $(REPEATS)
-	$(PYTHON) cli.py --analysis --steps $(STEPS)
+	$(PYTHON) cli.py --analysis --analysis-mode full
 	$(PYTHON) cli.py --sync
 	$(PYTHON) cli.py --perception
 
 
 paper:
-	$(PYTHON) cli.py --analysis --steps embedding clustering viz
+	$(PYTHON) cli.py --analysis --analysis-mode full
 	$(PYTHON) cli.py --perception
 	$(PYTHON) cli.py --regression
-
 
 # =========================================================
 # DEV MODE

@@ -94,19 +94,15 @@ def run_generation(seed, n_repeats, skip_audio=False):
 
 def run_analysis(steps=None, mode="audio"):
 
-    from analysis.dataset.loader import load_dataset
-    from analysis.pipelines.full_analysis import run_full_analysis
+    from analysis.core.run import run_analysis as engine_run
 
-    print("🧠 Loading dataset...")
+    print("🧠 Running analysis engine...")
 
-    df, X = load_dataset()
-
-    return run_full_analysis(
-        df=df,
-        X=X,
+    return engine_run(
         mode=mode,
         steps=steps,
-        save=True
+        save=True,
+        seed=42
     )
 
 # =========================================================
@@ -255,7 +251,7 @@ def main():
     parser.add_argument("--regression", action="store_true")
     parser.add_argument("--perception", action="store_true")
 
-    parser.add_argument("--analysis-mode", default="audio", choices=["audio", "groove"])
+    parser.add_argument("--analysis-mode", default="audio", choices=["full","audio", "groove"])
     parser.add_argument("--steps", nargs="+")
 
     parser.add_argument("--clean", action="store_true")
