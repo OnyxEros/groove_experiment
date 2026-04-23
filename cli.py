@@ -1,7 +1,23 @@
 import argparse
 import sys
 import shutil
+import time
+import traceback
 from pathlib import Path
+from contextlib import contextmanager
+
+# =========================================================
+# RICH (optional but strongly recommended: pip install rich)
+# =========================================================
+try:
+    from rich.console import Console
+    from rich.table import Table
+    from rich.panel import Panel
+    from rich.progress import Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
+    from rich import print as rprint
+    RICH = True
+except ImportError:
+    RICH = False
 
 # =========================================================
 # CONFIG (SAFE IMPORTS ONLY)
@@ -17,16 +33,141 @@ from config import (
 )
 
 # =========================================================
-# UTILS
+# CONSOLE / LOGGING
 # =========================================================
 
-def log(msg):
-    print(f"\n{msg}\n")
+console = Console() if RICH else None
 
 
-def safe_exit(msg, code=1):
-    print(f"\n❌ {msg}\n")
+def log(msg: str, style: str = "bold green"):
+    if RICH:
+        console.print(f"\n{msg}\n", style=style)
+    else:
+        print(f"\n{msg}\n")
+
+
+def log_error(msg: str):
+    if RICH:
+        console.print(f"\n❌ {msg}\n", style="bold red")
+    else:
+        print(f"\n❌ {msg}\n", file=sys.stderr)
+
+
+def log_warn(msg: str):
+    if RICH:
+        console.print(f"⚠️  {msg}", style="yellow")
+    else:
+        print(f"⚠️  {msg}")
+
+
+def safe_exit(msg: str, code: int = 1):
+    log_error(msg)
     sys.exit(code)
+
+
+@contextmanager
+def step(label: str, dry_run: bool = False):
+    """Context manager for timed pipeline steps with rich spinner."""
+    if dry_run:
+        if RICH:
+            console.print(f"  [dim]DRY-RUN[/dim] [cyan]{label}[/cyan]")
+        else:
+            print(f"  [DRY-RUN] {label}")
+        yield
+        return
+
+    start = time.perf_counter()
+    if RICH:
+        with Progress(
+            SpinnerColumn(),
+            TextColumn(f"[bold cyan]{label}[/bold cyan]"),
+            TimeElapsedColumn(),
+            console=console,
+            transient=True,
+        ) as progress:
+            progress.add_task("", total=None)
+            try:
+                yield
+            except Exception as e:
+                elapsed = time.perf_counter() - start
+                console.print(f"  ❌ [red]{label}[/red] failed after {elapsed:.1f}s")
+                console.print_exception(show_locals=False)
+                raise
+    else:
+        print(f"\n▶ {label}...")
+        try:
+            yield
+        except Exception as e:
+            elapsed = time.perf_counter() - start
+            print(f"  FAILED after {elapsed:.1f}s: {e}")
+            traceback.print_exc()
+            raise
+
+    elapsed = time.perf_counter() - start
+    if RICH:
+        console.print(f"  ✔ [green]{label}[/green] [dim]({elapsed:.1f}s)[/dim]")
+    else:
+        print(f"  ✔ {label} ({elapsed:.1f}s)")
+
+
+# =========================================================
+# PREFLIGHT CHECKS
+# =========================================================
+
+def check_soundfont() -> bool:
+    ok = Path(SOUNDFONT_PATH).exists()
+    if not ok:
+        log_warn(f"SoundFont not found: {SOUNDFONT_PATH}")
+    return ok
+
+
+def check_dependencies() -> dict[str, bool]:
+    """Check optional heavy dependencies without importing them."""
+    checks = {}
+    for pkg in ["numpy", "pandas", "scipy", "sklearn", "umap"]:
+        try:
+            __import__(pkg.replace("-", "_"))
+            checks[pkg] = True
+        except ImportError:
+            checks[pkg] = False
+    return checks
+
+
+def print_status():
+    """Print a rich status table of all data dirs and deps."""
+    if not RICH:
+        print("Status requires `rich`. Install with: pip install rich")
+        return
+
+    table = Table(title="🎧 Groove System Status", show_header=True, header_style="bold magenta")
+    table.add_column("Component", style="cyan")
+    table.add_column("Path / Package", style="dim")
+    table.add_column("Status", justify="center")
+
+    dirs = {
+        "MIDI dir": MIDI_DIR,
+        "WAV dir": WAV_DIR,
+        "MP3 dir": MP3_DIR,
+        "Preview dir": PREVIEW_DIR,
+        "Metadata": METADATA_PATH,
+        "SoundFont": Path(SOUNDFONT_PATH),
+    }
+
+    for name, path in dirs.items():
+        exists = path.exists()
+        status = "[green]✔[/green]" if exists else "[red]✗[/red]"
+        extra = ""
+        if exists and path.is_dir():
+            n = len(list(path.rglob("*")))
+            extra = f" ({n} files)"
+        table.add_row(name, str(path) + extra, status)
+
+    deps = check_dependencies()
+    for pkg, ok in deps.items():
+        status = "[green]✔[/green]" if ok else "[yellow]–[/yellow]"
+        table.add_row(pkg, f"import {pkg}", status)
+
+    console.print(table)
 
 
 # =========================================================
@@ -34,10 +175,11 @@ def safe_exit(msg, code=1):
 # =========================================================
 
 def clean_outputs():
-    log("🧹 Cleaning outputs (MIDI/WAV/MP3/PREVIEW)...")
+    log("🧹 Cleaning outputs (MIDI / WAV / MP3 / PREVIEW)...")
     for d in [MIDI_DIR, WAV_DIR, MP3_DIR, PREVIEW_DIR]:
         if d.exists():
             shutil.rmtree(d)
+            log(f"  removed {d}", style="dim")
 
 
 def clean_metadata():
@@ -48,69 +190,61 @@ def clean_metadata():
 
 def clean_analysis(subdirs=None):
     log("🧹 Cleaning analysis...")
-
     analysis_dir = Path("data/analysis")
-
     if not analysis_dir.exists():
         return
-
     if subdirs is None:
         shutil.rmtree(analysis_dir)
-        return
-
-    for sub in subdirs:
-        p = analysis_dir / sub
-        if p.exists():
-            shutil.rmtree(p)
+    else:
+        for sub in subdirs:
+            p = analysis_dir / sub
+            if p.exists():
+                shutil.rmtree(p)
 
 
 def clean_pycache():
     log("🧹 Cleaning __pycache__...")
-    root = Path(".")
-    for pycache in root.rglob("__pycache__"):
+    for pycache in Path(".").rglob("__pycache__"):
         try:
             shutil.rmtree(pycache)
         except Exception as e:
-            print(f"⚠️ Could not delete {pycache}: {e}")
+            log_warn(f"Could not delete {pycache}: {e}")
 
-def clean(levels):
 
+def clean(levels: list[str], dry_run: bool = False):
     if not levels:
         levels = ["all"]
 
-    if "all" in levels:
-        clean_outputs()
-        clean_metadata()
-        clean_analysis()
-        clean_pycache()
-        log("✔ Full clean done")
-        return
+    log(f"🧹 Clean targets: {levels}" + (" [DRY-RUN]" if dry_run else ""))
 
-    if "outputs" in levels:
-        clean_outputs()
+    dispatch = {
+        "outputs": clean_outputs,
+        "metadata": clean_metadata,
+        "analysis": clean_analysis,
+        "cache": clean_pycache,
+    }
 
-    if "metadata" in levels:
-        clean_metadata()
+    targets = list(dispatch.keys()) if "all" in levels else [l for l in levels if l in dispatch]
 
-    if "analysis" in levels:
-        clean_analysis()
+    for target in targets:
+        if dry_run:
+            log(f"  [DRY-RUN] would clean: {target}", style="dim")
+        else:
+            dispatch[target]()
 
-    if "cache" in levels:
-        clean_pycache()
-
-    if not levels:
-        levels = ["all"]
-
-    log(f"🧹 Clean targets: {levels}")
-
-    log("✔ Partial clean done")
+    log("✔ Clean done")
 
 
 # =========================================================
 # GENERATION PIPELINE
 # =========================================================
 
-def run_generation(seed, n_repeats, skip_audio=False):
+def run_generation(seed: int, n_repeats, skip_audio: bool = False, dry_run: bool = False):
+    if dry_run:
+        log("🎛️  [DRY-RUN] Generation pipeline — no files will be written")
+        for label in ["run_experiment", "export_all MIDI", "convert_all audio", "build_audio_map", "save metadata"]:
+            log(f"  → {label}", style="dim")
+        return None
 
     from groove.generator import run_experiment
     from audio.midi_export import export_all
@@ -118,91 +252,98 @@ def run_generation(seed, n_repeats, skip_audio=False):
 
     ensure_data_dirs()
 
-    log("🎛️ Generating stimuli...")
-    df, stim_cache = run_experiment(seed=seed, n_repeats=n_repeats)
+    with step("Generate stimuli"):
+        df, stim_cache = run_experiment(seed=seed, n_repeats=n_repeats)
+        log(f"  {len(df)} stimuli generated", style="dim")
 
-    log("🎼 Exporting MIDI...")
-    export_all(df, stim_cache, out_dir=MIDI_DIR)
+    with step("Export MIDI"):
+        export_all(df, stim_cache, out_dir=MIDI_DIR)
 
     if not skip_audio:
-        log("🎧 Rendering audio...")
+        if not check_soundfont():
+            safe_exit(f"SoundFont not found: {SOUNDFONT_PATH}. Use --skip-audio to bypass.")
 
-        if not Path(SOUNDFONT_PATH).exists():
-            safe_exit(f"SoundFont not found: {SOUNDFONT_PATH}")
+        with step("Render audio (WAV → MP3)"):
+            convert_all(
+                midi_root=MIDI_DIR,
+                wav_root=WAV_DIR,
+                mp3_root=MP3_DIR,
+                soundfont=str(SOUNDFONT_PATH),
+            )
+    else:
+        log_warn("Audio rendering skipped (--skip-audio)")
 
-        convert_all(
-            midi_root=MIDI_DIR,
-            wav_root=WAV_DIR,
-            mp3_root=MP3_DIR,
-            soundfont=str(SOUNDFONT_PATH),
-        )
+    with step("Build dataset"):
+        df = build_audio_map(df, mp3_root=MP3_DIR)
+        METADATA_PATH.parent.mkdir(parents=True, exist_ok=True)
+        df.to_csv(METADATA_PATH, index=False)
 
-    log("📊 Building dataset...")
-    df = build_audio_map(df, mp3_root=MP3_DIR)
-
-    METADATA_PATH.parent.mkdir(parents=True, exist_ok=True)
-    df.to_csv(METADATA_PATH, index=False)
-
-    log(f"✔ Generation complete → {len(df)} stimuli")
-
+    log(f"✔ Generation complete → {len(df)} stimuli saved to {METADATA_PATH}")
     return df
 
 
 # =========================================================
-# ANALYSIS (STRICT READ ONLY)
+# ANALYSIS
 # =========================================================
 
-def run_analysis(steps=None, mode="audio"):
+def run_analysis(steps=None, mode: str = "audio", dry_run: bool = False):
+    if dry_run:
+        log(f"🧠 [DRY-RUN] Analysis — mode={mode}, steps={steps or 'default'}")
+        return None
 
     from analysis.core.run import run_analysis as engine_run
 
-    print("🧠 Running analysis engine...")
+    with step(f"Analysis engine [mode={mode}]"):
+        result = engine_run(mode=mode, steps=steps, save=True, seed=42)
 
-    return engine_run(
-        mode=mode,
-        steps=steps,
-        save=True,
-        seed=42
-    )
+    return result
+
 
 # =========================================================
-# SUPABASE SYNC (LAZY IMPORT)
+# SUPABASE SYNC
 # =========================================================
 
-def sync_supabase():
+def sync_supabase(dry_run: bool = False):
+    if dry_run:
+        log("☁️  [DRY-RUN] Supabase sync skipped")
+        return
 
     from backend.dataset import load_dataset
     from infra.supabase_client import get_supabase
 
-    log("☁️ Syncing to Supabase...")
-
-    df = load_dataset()
-    supabase = get_supabase()
-
-    supabase.table("stimuli").upsert(
-        df.to_dict(orient="records")
-    ).execute()
+    with step("Sync to Supabase"):
+        df = load_dataset()
+        supabase = get_supabase()
+        supabase.table("stimuli").upsert(df.to_dict(orient="records")).execute()
 
     log(f"✔ Synced {len(df)} rows")
 
 
 # =========================================================
-# REGRESSION (LAZY)
+# REGRESSION
 # =========================================================
 
-def run_regression_step():
+def run_regression_step(dry_run: bool = False):
+    if dry_run:
+        log("📈 [DRY-RUN] Regression skipped")
+        return
 
     from regression.run import run_regression
 
-    log("📈 Running regression...")
-    return run_regression()
+    with step("Regression"):
+        result = run_regression()
+
+    return result
 
 
 # =========================================================
-# PERCEPTION (LAZY + ISOLATED)
+# PERCEPTION
 # =========================================================
 
-def run_perception():
+def run_perception(dry_run: bool = False):
+    if dry_run:
+        log("🧠 [DRY-RUN] Perception pipeline skipped")
+        return None, None
 
     from backend.dataset import load_dataset
     import pandas as pd
@@ -210,25 +351,24 @@ def run_perception():
     from perception.alignment import fit_alignment
     from perception.metrics import cluster_perception_diff
 
-    log("🧠 Running perception pipeline...")
+    with step("Load embeddings"):
+        Z, stimulus_ids = load_dataset(return_embeddings=True)
+        df = pd.DataFrame(Z, columns=["z1", "z2", "z3"])
+        df["stimulus_id"] = stimulus_ids
 
-    Z, stimulus_ids = load_dataset(return_embeddings=True)
+    with step("Load perceptual dataset"):
+        df = load_perceptual_dataset(df)
 
-    df = pd.DataFrame(Z, columns=["z1", "z2", "z3"])
-    df["stimulus_id"] = stimulus_ids
+    with step("Fit alignment"):
+        Z = df[["z1", "z2", "z3"]].values
+        ratings = df["rating"].values
+        model, score = fit_alignment(Z, ratings)
 
-    df = load_perceptual_dataset(df)
-
-    Z = df[["z1", "z2", "z3"]].values
-    ratings = df["rating"].values
-
-    model, score = fit_alignment(Z, ratings)
-
-    print("\n📊 Perceptual alignment R²:", score)
+    log(f"📊 Perceptual alignment R²: {score:.4f}")
 
     if "cluster" in df.columns:
         scores = cluster_perception_diff(df["cluster"].values, ratings)
-        print("\n📦 Cluster perception:", scores)
+        log(f"📦 Cluster perception: {scores}")
 
     return model, score
 
@@ -237,7 +377,10 @@ def run_perception():
 # PREVIEW
 # =========================================================
 
-def preview(seed=42):
+def preview(seed: int = 42, dry_run: bool = False):
+    if dry_run:
+        log("🎧 [DRY-RUN] Preview skipped")
+        return
 
     from groove.generator import Grid, Voices, MicroTiming, Stimulus
     from audio.midi_export import export_all
@@ -246,125 +389,166 @@ def preview(seed=42):
     import numpy as np
     import pandas as pd
 
-    log("🎧 Preview mode...")
-
-    grid = Grid()
-    voices = Voices(grid, seed=seed)
-    rng = np.random.default_rng(seed)
-    micro = MicroTiming(rng, grid.step_duration)
-
-    stim_builder = Stimulus(voices, micro)
-
     configs = [
-        {"name": "baseline", "S_mv": 0, "D_mv": 1, "E": 0.0},
-        {"name": "swing", "S_mv": 0, "D_mv": 1, "E": 0.5},
+        {"name": "baseline",   "S_mv": 0, "D_mv": 1, "E": 0.0},
+        {"name": "swing",      "S_mv": 0, "D_mv": 1, "E": 0.5},
         {"name": "syncopated", "S_mv": 2, "D_mv": 1, "E": 0.0},
     ]
 
-    rows = []
-    cache = {}
+    with step("Build preview stimuli"):
+        grid = Grid()
+        voices = Voices(grid, seed=seed)
+        rng = np.random.default_rng(seed)
+        micro = MicroTiming(rng, grid.step_duration)
+        stim_builder = Stimulus(voices, micro)
 
-    for i, cfg in enumerate(configs):
-        stim = stim_builder.build(cfg, seed + i)
-        cache[i] = stim
+        rows, cache = [], {}
+        for i, cfg in enumerate(configs):
+            stim = stim_builder.build(cfg, seed + i)
+            cache[i] = stim
+            rows.append({"id": i, "label": cfg["name"], **cfg})
 
-        rows.append({
-            "id": i,
-            "label": cfg["name"],
-            **cfg
-        })
+        df = pd.DataFrame(rows)
+        PREVIEW_DIR.mkdir(parents=True, exist_ok=True)
 
-    df = pd.DataFrame(rows)
+    with step("Export preview MIDI"):
+        export_all(df, cache, out_dir=PREVIEW_DIR)
 
-    PREVIEW_DIR.mkdir(parents=True, exist_ok=True)
+    with step("Render preview audio"):
+        convert_all(
+            midi_root=PREVIEW_DIR,
+            wav_root=PREVIEW_DIR / "wav",
+            mp3_root=PREVIEW_DIR / "mp3",
+            soundfont=str(SOUNDFONT_PATH),
+        )
 
-    export_all(df, cache, out_dir=PREVIEW_DIR)
-
-    convert_all(
-        midi_root=PREVIEW_DIR,
-        wav_root=PREVIEW_DIR / "wav",
-        mp3_root=PREVIEW_DIR / "mp3",
-        soundfont=str(SOUNDFONT_PATH),
-    )
-
-    log("✔ Preview ready")
+    log(f"✔ Preview ready → {PREVIEW_DIR / 'mp3'}")
 
 
 # =========================================================
 # MAIN
 # =========================================================
 
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="groove",
+        description="🎧 Groove Experiment CLI",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  python cli.py --generate --seed 42 --repeats 8
+  python cli.py --analysis --analysis-mode full
+  python cli.py --generate --analysis --sync
+  python cli.py --clean all
+  python cli.py --generate --dry-run
+  python cli.py --status
+        """,
+    )
+
+    # Pipeline
+    pipeline = parser.add_argument_group("Pipeline")
+    pipeline.add_argument("--generate",      action="store_true", help="Run generation pipeline")
+    pipeline.add_argument("--analysis",      action="store_true", help="Run analysis pipeline")
+    pipeline.add_argument("--analysis-only", action="store_true", help="Run analysis only (alias)")
+    pipeline.add_argument("--preview",       action="store_true", help="Generate preview stimuli")
+
+    # Generation options
+    gen = parser.add_argument_group("Generation options")
+    gen.add_argument("--seed",       type=int, default=42,   help="Random seed (default: 42)")
+    gen.add_argument("--repeats",    type=int, default=None, help="Number of repeats")
+    gen.add_argument("--skip-audio", action="store_true",    help="Skip WAV/MP3 rendering")
+
+    # Analysis options
+    ana = parser.add_argument_group("Analysis options")
+    ana.add_argument("--analysis-mode", default="audio", choices=["full", "audio", "groove"],
+                     help="Analysis mode (default: audio)")
+    ana.add_argument("--steps", nargs="+", metavar="STEP",
+                     help="Custom analysis steps: embeddings projection clustering metrics_view viz export")
+
+    # Optional modules
+    opt = parser.add_argument_group("Optional modules")
+    opt.add_argument("--sync",        action="store_true", help="Sync dataset to Supabase")
+    opt.add_argument("--regression",  action="store_true", help="Run regression model")
+    opt.add_argument("--perception",  action="store_true", help="Run perceptual alignment")
+
+    # Maintenance
+    maint = parser.add_argument_group("Maintenance")
+    maint.add_argument("--clean", nargs="*",
+                       choices=["all", "outputs", "metadata", "analysis", "cache"],
+                       metavar="TARGET",
+                       help="Clean targets: all outputs metadata analysis cache")
+    maint.add_argument("--status",   action="store_true", help="Print system status")
+    maint.add_argument("--dry-run",  action="store_true", help="Show what would run, without executing")
+
+    return parser
+
+
 def main():
-
-    parser = argparse.ArgumentParser("🎧 Groove CLI (PRO refactored)")
-
-    parser.add_argument("--generate", action="store_true")
-    parser.add_argument("--analysis", action="store_true")
-    parser.add_argument("--analysis-only", action="store_true")
-    parser.add_argument("--preview", action="store_true")
-
-    parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--repeats", type=int, default=None)
-    parser.add_argument("--skip-audio", action="store_true")
-
-    parser.add_argument("--sync", action="store_true")
-    parser.add_argument("--regression", action="store_true")
-    parser.add_argument("--perception", action="store_true")
-
-    parser.add_argument("--analysis-mode", default="audio", choices=["full","audio", "groove"])
-    parser.add_argument("--steps", nargs="+")
-
-    parser.add_argument("--clean", nargs="*", choices=["all", "outputs", "metadata", "analysis", "cache"],)
-
+    parser = build_parser()
     args = parser.parse_args()
 
-    # =====================================================
-    # CLEAN (NO IMPORT SIDE EFFECTS)
-    # =====================================================
+    dry = args.dry_run
+
+    if dry:
+        log("🔍 DRY-RUN mode — no files will be written, no imports executed", style="bold yellow")
+
+    # ── STATUS ───────────────────────────────────────────
+    if args.status:
+        print_status()
+        return
+
+    # ── CLEAN ────────────────────────────────────────────
     if args.clean is not None:
-        clean(args.clean or ["all"])
+        clean(args.clean or ["all"], dry_run=dry)
         return
 
-    # =====================================================
-    # PREVIEW
-    # =====================================================
+    # ── PREVIEW ──────────────────────────────────────────
     if args.preview:
-        ensure_data_dirs()
-        preview(seed=args.seed)
+        if not dry:
+            ensure_data_dirs()
+        preview(seed=args.seed, dry_run=dry)
         return
 
-    # =====================================================
-    # GENERATION ONLY
-    # =====================================================
+    # ── NOTHING SPECIFIED ────────────────────────────────
+    nothing = not any([
+        args.generate, args.analysis, args.analysis_only,
+        args.sync, args.regression, args.perception,
+    ])
+    if nothing:
+        parser.print_help()
+        return
+
+    # ── GENERATION ───────────────────────────────────────
     if args.generate:
         run_generation(
             seed=args.seed,
             n_repeats=args.repeats,
-            skip_audio=args.skip_audio
+            skip_audio=args.skip_audio,
+            dry_run=dry,
         )
 
-    # =====================================================
-    # ANALYSIS ONLY (READ-ONLY)
-    # =====================================================
+    # ── ANALYSIS ─────────────────────────────────────────
     if args.analysis or args.analysis_only:
         run_analysis(
             steps=args.steps,
-            mode=args.analysis_mode
+            mode=args.analysis_mode,
+            dry_run=dry,
         )
 
-    # =====================================================
-    # OPTIONAL STEPS
-    # =====================================================
+    # ── OPTIONAL MODULES ─────────────────────────────────
     if args.sync:
-        sync_supabase()
+        sync_supabase(dry_run=dry)
 
     if args.regression:
-        run_regression_step()
+        run_regression_step(dry_run=dry)
 
     if args.perception:
-        run_perception()
+        run_perception(dry_run=dry)
 
-    print("\n🔥 DONE\n")
+    if RICH:
+        console.print("\n[bold green]🔥 DONE[/bold green]\n")
+    else:
+        print("\n🔥 DONE\n")
 
 
 if __name__ == "__main__":
