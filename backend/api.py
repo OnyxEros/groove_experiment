@@ -7,7 +7,7 @@ from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
-from config import MP3_DIR, METADATA_PATH
+from config import MP3_DIR, METADATA_PATH, INDEX_PATH
 from backend.models import Response
 from infra.supabase_client import insert_response
 
@@ -115,7 +115,7 @@ def save_response(resp: Response):
 # FRONTEND (HTML FILE)
 # =========================================================
 
+
 @app.get("/", response_class=HTMLResponse)
 def home():
-    html = Path("backend/templates/index.html").read_text()
-    return HTMLResponse(content=html)
+    return INDEX_PATH.read_text()

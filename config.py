@@ -24,7 +24,6 @@ API_RELOAD = ENV == "dev"
 # =========================================================
 # DATA ROOT
 # =========================================================
-
 DATA_DIR = BASE_DIR / "data"
 
 MIDI_DIR = DATA_DIR / "midi"
@@ -48,6 +47,14 @@ def get_run_dir():
 
 METADATA_PATH = DATA_DIR / "metadata.csv"
 RESP_FILE = DATA_DIR / "responses.csv"
+
+
+# =========================================================
+# BACKEND
+# =========================================================
+
+BACKEND_DIR = BASE_DIR / "backend"
+INDEX_PATH = BACKEND_DIR / "templates" / "index.html"
 
 
 # =========================================================
