@@ -5,7 +5,6 @@ HTML_PAGE = r"""
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
 <style>
-
 :root {
     --bg: #0b0c10;
     --card: #15171c;
@@ -32,17 +31,13 @@ Arial;
     background: var(--card);
     border-radius: 20px;
     padding: 28px;
-    box-shadow: 0 20px 60px rgba(0,0,0,0.6);
 }
-
-h2 { text-align:center; }
 
 .subtitle {
     text-align:center;
     color: var(--muted);
     font-size: 13px;
     margin-bottom: 18px;
-    line-height: 1.4;
 }
 
 button {
@@ -53,55 +48,21 @@ button {
     background: linear-gradient(135deg,#6c8cff,#4c7dff);
     color:white;
     font-size:16px;
-    font-weight:600;
     cursor:pointer;
-    margin-top: 18px;
 }
 
-button:disabled { background:#2a2f3a; }
-
-.progress {
-    height:6px;
-    background: rgba(255,255,255,0.08);
-    border-radius:10px;
-    overflow:hidden;
-    margin-bottom:18px;
-}
-
-.progress-bar {
-    height:100%;
-    background: var(--accent);
-    width:0%;
-    transition: width 0.3s ease;
-}
+.progress { height:6px; background:rgba(255,255,255,0.08); 
+border-radius:10px; margin-bottom:18px; }
+.progress-bar { height:100%; background:var(--accent); width:0%; }
 
 .slider-block { margin:18px 0; }
-
-label { font-size:14px; color:var(--muted); }
 
 .scale-labels {
     display:flex;
     justify-content:space-between;
     font-size:11px;
     color:rgba(255,255,255,0.5);
-    margin-bottom:4px;
 }
-
-input[type=range] {
-    width:100%;
-    accent-color: var(--accent);
-}
-
-.card {
-    padding:14px;
-    background:rgba(255,255,255,0.04);
-    border-radius:12px;
-    font-size:14px;
-    line-height:1.5;
-}
-
-.center { text-align:center; }
-
 </style>
 </head>
 
@@ -113,178 +74,24 @@ input[type=range] {
     <h2>🎧 Groove Study</h2>
     <div class="subtitle">Expérience de perception musicale</div>
 
-    <div class="card">
-        Vous allez écouter des extraits musicaux.<br><br>
+    <p>
+        Évaluez le <b>groove</b> (envie de bouger) et la 
+<b>complexité</b>.
+    </p>
 
-        <b>Groove</b> : envie de bouger (taper du pied, hocher la 
-tête)<br><br>
-
-        <b>Complexité</b> : impression de structure rythmique simple ou 
-riche<br><br>
-
-        Répondez spontanément — il n'y a pas de bonne ou mauvaise réponse.
-    </div>
-
-    <button onclick="startCalibration()">Commencer</button>
-</div>
-
-<div id="calibration" style="display:none;">
-    <h2>Calibration</h2>
-    <div class="subtitle">
-        Utilisez les sliders selon votre ressenti, sans répondre trop 
-vite.
-    </div>
-    <button onclick="startExperiment()">Démarrer l'expérience</button>
+    <button onclick="start()">Commencer</button>
 </div>
 
 <div id="task" style="display:none;">
-    <div class="progress">
-        <div class="progress-bar" id="progress"></div>
-    </div>
-    <div class="subtitle" id="counter"></div>
+    <div class="progress"><div class="progress-bar" 
+id="progress"></div></div>
+    <div id="counter" class="subtitle"></div>
     <div id="content"></div>
 </div>
 
 </div>
 
-<script>
-
-let participant_id = null;
-let stimuli = [];
-let idx = 0;
-let start_time = 0;
-let canRespond = false;
-let is_sending = false;
-
-async function init() {
-    participant_id = (await fetch("/new_participant").then(r => 
-r.json())).participant_id;
-    stimuli = await fetch("/stimuli?n=20").then(r => r.json());
-    shuffle(stimuli);
-    preloadAudio(stimuli);
-}
-
-function startCalibration() {
-    document.getElementById("intro").style.display = "none";
-    document.getElementById("calibration").style.display = "block";
-}
-
-function startExperiment() {
-    document.getElementById("calibration").style.display = "none";
-    document.getElementById("task").style.display = "block";
-    render();
-}
-
-function render() {
-
-    if (idx >= stimuli.length) {
-        document.getElementById("app").innerHTML =
-            "<h2>🙏 Merci</h2><div class='subtitle'>Expérience 
-terminée</div>";
-        return;
-    }
-
-    let s = stimuli[idx];
-
-    let progress = Math.round((idx / stimuli.length) * 100);
-    document.getElementById("progress").style.width = progress + "%";
-
-    document.getElementById("counter").innerText =
-        "Extrait " + (idx+1) + " / " + stimuli.length + " (" + progress + 
-"%)";
-
-    canRespond = false;
-
-    document.getElementById("content").innerHTML = `
-        <audio id="audio" controls autoplay>
-            <source src="${s.audio_url}" type="audio/mp3">
-        </audio>
-
-        <div class="card center" style="margin-top:10px;">
-            Écoutez puis évaluez votre ressenti
-        </div>
-
-        <div class="slider-block">
-            <label>Groove</label>
-            <div 
-class="scale-labels"><span>Faible</span><span>Fort</span></div>
-            <input type="range" id="g" min="1" max="7" value="4">
-        </div>
-
-        <div class="slider-block">
-            <label>Complexité</label>
-            <div 
-class="scale-labels"><span>Simple</span><span>Complexe</span></div>
-            <input type="range" id="c" min="1" max="7" value="4">
-        </div>
-
-        <button onclick="send()" id="btn">Continuer</button>
-    `;
-
-    let audio = document.getElementById("audio");
-
-    audio.oncanplaythrough = () => {
-        start_time = Date.now();
-        setTimeout(() => { canRespond = true; }, 500);
-    };
-}
-
-async function send() {
-
-    if (!canRespond || is_sending) return;
-    is_sending = true;
-
-    let s = stimuli[idx];
-    let rt = (Date.now() - start_time) / 1000;
-
-    document.getElementById("btn").disabled = true;
-
-    const payload = {
-        participant_id: participant_id,
-        stim_id: s.stim_id || s.audio_file,
-        groove: Number(document.getElementById("g").value),
-        complexity: Number(document.getElementById("c").value),
-        rt: rt,
-        order: idx,
-        timestamp: Date.now(),
-        is_catch: s.is_catch || false
-    };
-
-    await fetch("/response", {
-        method: "POST",
-        headers: {"Content-Type": "application/json"},
-        body: JSON.stringify(payload)
-    });
-
-    idx++;
-
-    document.getElementById("content").innerHTML =
-        "<div class='center' style='opacity:0.5;font-size:20px;'>+</div>";
-
-    setTimeout(() => {
-        is_sending = false;
-        render();
-    }, 600);
-}
-
-function shuffle(array) {
-    for (let i = array.length - 1; i > 0; i--) {
-        const j = Math.floor(Math.random() * (i + 1));
-        [array[i], array[j]] = [array[j], array[i]];
-    }
-    return array;
-}
-
-function preloadAudio(stimuli) {
-    stimuli.forEach(s => {
-        const a = new Audio();
-        a.src = s.audio_url;
-    });
-}
-
-init();
-
-</script>
+<script src="/static/app.js"></script>
 
 </body>
 </html>
