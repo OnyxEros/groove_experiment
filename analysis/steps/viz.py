@@ -42,7 +42,8 @@ class VizStep(AnalysisStep):
         if umap_realized is not None and umap_emergent is not None and labels is not None:
             GenerativeValidation().plot(
                 df=df,
-                path=rm.run_dir / "figures/generative_validation.png"
+                path=rm.run_dir / "figures/generative_validation.png", 
+                verbose=True
             )
 
         # =====================================================

@@ -17,7 +17,7 @@ class GenerativeValidation:
     Panel D: VIF bar chart (multicollinearity check)
     """
 
-    def plot(self, df, path):
+    def plot(self, df, path, verbose=False):
 
         # =====================================================
         # STYLE
@@ -51,6 +51,11 @@ class GenerativeValidation:
         axC = fig.add_subplot(gs[1, 0])
         axD = fig.add_subplot(gs[1, 1])
 
+        if verbose:
+            print("\n=== GENERATIVE VALIDATION ===")
+            print("N stimuli:", len(df))
+            print("Columns:", df.columns.tolist())
+
         # =====================================================
         # PANEL A: CORRELATION MATRIX
         # =====================================================
@@ -69,6 +74,13 @@ class GenerativeValidation:
             corr_data.append(row)
 
         corr_matrix = np.array(corr_data)
+        if verbose:
+            print("\n[Panel A] Correlation matrix (S_mv, D_mv, E → descriptors)")
+            print(pd.DataFrame(
+                corr_matrix,
+                index=params,
+                columns=descriptors
+            ))
 
         im = axA.imshow(corr_matrix, cmap="RdBu_r", vmin=-1, vmax=1, aspect="auto")
         axA.set_xticks(range(len(descriptors)))
@@ -111,6 +123,13 @@ class GenerativeValidation:
 
         var_df = pd.DataFrame(variance_data)
 
+        if verbose:
+            print("\n[Panel B] Intra-condition variability (CV summary)")
+            if len(var_df) > 0:
+                print(var_df.groupby("descriptor")["cv"].describe())
+            else:
+                print("No repeated conditions → no variance computed")
+
         if len(var_df) > 0:
             sns.violinplot(
                 data=var_df,
@@ -151,6 +170,13 @@ class GenerativeValidation:
             for i, d in enumerate(d_vals):
                 for j, s in enumerate(s_vals):
                     coverage[i, j] = len(df[(df["S_mv"] == s) & (df["D_mv"] == d)])
+
+            if verbose:
+                print("\n[Panel C] Design space coverage")
+                print("S values:", s_vals)
+                print("D values:", d_vals)
+                print("E values:", e_vals)
+                print("Coverage matrix:\n", coverage)
 
             im = axC.imshow(coverage, cmap="YlOrRd", aspect="auto", origin="lower")
             axC.set_xticks(range(len(s_vals)))
@@ -207,6 +233,10 @@ class GenerativeValidation:
                 vif_data.append({"predictor": pred, "VIF": vif})
 
             vif_df = pd.DataFrame(vif_data)
+
+            if verbose:
+                print("\n[Panel D] VIF diagnostics")
+                print(vif_df.sort_values("VIF", ascending=False))
 
             colors = [
                 "#d62728" if v > 10 else "#2ca02c" if v < 5 else "#ff7f0e"

@@ -46,7 +46,7 @@ help:
 	@echo "  make refresh              re-fetch Supabase responses (ignore local cache)"
 	@echo ""
 	@echo "$(BOLD)$(CYAN)☁️   INFRA$(RESET)"
-	@echo "  make sync                 sync stimuli metadata → Supabase"
+	@echo "  make sync                 sync Supabase → data/responses.csv"
 	@echo "  make serve                start FastAPI backend"
 	@echo "  make ui                   open Streamlit explorer"
 	@echo ""

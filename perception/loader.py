@@ -47,6 +47,7 @@ def load_perceptual_dataset(
     Returns:
         DataFrame joint : features stimuli + groove_mean + groove_std + n_participants
     """
+
     if embedding_df is None:
         meta_path = Path(METADATA_PATH)
         if not meta_path.exists():
@@ -66,6 +67,12 @@ def load_perceptual_dataset(
 
     if ratings.empty:
         raise ValueError("Aucune donnée perceptive disponible après agrégation.")
+
+    embedding_df = embedding_df.copy()
+    ratings = ratings.copy()
+
+    embedding_df["stim_id"] = embedding_df["stim_id"].astype(str)
+    ratings["stim_id"] = ratings["stim_id"].astype(str)
 
     df = embedding_df.merge(ratings, on="stim_id", how="inner")
 
