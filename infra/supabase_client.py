@@ -1,22 +1,20 @@
 import os
 from supabase import create_client, Client
 
-SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+_client: Client | None = None
 
-if not SUPABASE_URL or not SUPABASE_KEY:
-    raise RuntimeError("Missing Supabase env vars")
-
-supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
-
-
-# =========================================================
-# API CLEAN WRAPPERS
-# =========================================================
+def get_supabase() -> Client:
+    global _client
+    if _client is None:
+        url = os.getenv("SUPABASE_URL")
+        key = os.getenv("SUPABASE_KEY")
+        if not url or not key:
+            raise RuntimeError("Missing env vars: SUPABASE_URL / SUPABASE_KEY")
+        _client = create_client(url, key)
+    return _client
 
 def insert_response(row: dict):
-    return supabase.table("responses").insert(row).execute()
+    return get_supabase().table("responses").insert(row).execute()
 
-
-def fetch_responses():
-    return supabase.table("responses").select("*").execute().data
+def fetch_responses() -> list[dict]:
+    return get_supabase().table("responses").select("*").execute().data

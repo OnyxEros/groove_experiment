@@ -7,20 +7,18 @@ from pathlib import Path
 from contextlib import contextmanager
 
 # =========================================================
-# RICH (optional but strongly recommended: pip install rich)
+# RICH (optional — pip install rich)
 # =========================================================
 try:
     from rich.console import Console
     from rich.table import Table
-    from rich.panel import Panel
     from rich.progress import Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
-    from rich import print as rprint
     RICH = True
 except ImportError:
     RICH = False
 
 # =========================================================
-# CONFIG (SAFE IMPORTS ONLY)
+# CONFIG (safe imports only — no heavy deps)
 # =========================================================
 from config import (
     ensure_data_dirs,
@@ -88,7 +86,7 @@ def step(label: str, dry_run: bool = False):
             progress.add_task("", total=None)
             try:
                 yield
-            except Exception as e:
+            except Exception:
                 elapsed = time.perf_counter() - start
                 console.print(f"  ❌ [red]{label}[/red] failed after {elapsed:.1f}s")
                 console.print_exception(show_locals=False)
@@ -122,7 +120,6 @@ def check_soundfont() -> bool:
 
 
 def check_dependencies() -> dict[str, bool]:
-    """Check optional heavy dependencies without importing them."""
     checks = {}
     for pkg in ["numpy", "pandas", "scipy", "sklearn", "umap"]:
         try:
@@ -134,23 +131,26 @@ def check_dependencies() -> dict[str, bool]:
 
 
 def print_status():
-    """Print a rich status table of all data dirs and deps."""
     if not RICH:
         print("Status requires `rich`. Install with: pip install rich")
         return
 
-    table = Table(title="🎧 Groove System Status", show_header=True, header_style="bold magenta")
+    table = Table(
+        title="🎧 Groove System Status",
+        show_header=True,
+        header_style="bold magenta",
+    )
     table.add_column("Component", style="cyan")
     table.add_column("Path / Package", style="dim")
     table.add_column("Status", justify="center")
 
     dirs = {
-        "MIDI dir": MIDI_DIR,
-        "WAV dir": WAV_DIR,
-        "MP3 dir": MP3_DIR,
+        "MIDI dir":   MIDI_DIR,
+        "WAV dir":    WAV_DIR,
+        "MP3 dir":    MP3_DIR,
         "Preview dir": PREVIEW_DIR,
-        "Metadata": METADATA_PATH,
-        "SoundFont": Path(SOUNDFONT_PATH),
+        "Metadata":   METADATA_PATH,
+        "SoundFont":  Path(SOUNDFONT_PATH),
     }
 
     for name, path in dirs.items():
@@ -167,11 +167,24 @@ def print_status():
         status = "[green]✔[/green]" if ok else "[yellow]–[/yellow]"
         table.add_row(pkg, f"import {pkg}", status)
 
+    # cache local des réponses
+    from config import RESP_FILE
+    resp = Path(RESP_FILE)
+    if resp.exists():
+        import pandas as pd
+        try:
+            n = len(pd.read_csv(resp))
+            table.add_row("responses.csv", str(resp), f"[green]✔ ({n} rows)[/green]")
+        except Exception:
+            table.add_row("responses.csv", str(resp), "[yellow]⚠ unreadable[/yellow]")
+    else:
+        table.add_row("responses.csv", str(resp), "[dim]–[/dim]")
+
     console.print(table)
 
 
 # =========================================================
-# CLEAN (NO HEAVY IMPORTS)
+# CLEAN
 # =========================================================
 
 def clean_outputs():
@@ -186,6 +199,17 @@ def clean_metadata():
     log("🧹 Cleaning metadata...")
     if METADATA_PATH.exists():
         METADATA_PATH.unlink()
+
+
+def clean_responses():
+    """Supprime le cache local des réponses Supabase (pas la table cloud)."""
+    from config import RESP_FILE
+    path = Path(RESP_FILE)
+    if path.exists():
+        path.unlink()
+        log(f"🧹 Removed local responses cache: {path}")
+    else:
+        log_warn("No local responses cache to remove.")
 
 
 def clean_analysis(subdirs=None):
@@ -218,13 +242,16 @@ def clean(levels: list[str], dry_run: bool = False):
     log(f"🧹 Clean targets: {levels}" + (" [DRY-RUN]" if dry_run else ""))
 
     dispatch = {
-        "outputs": clean_outputs,
-        "metadata": clean_metadata,
-        "analysis": clean_analysis,
-        "cache": clean_pycache,
+        "outputs":   clean_outputs,
+        "metadata":  clean_metadata,
+        "responses": clean_responses,
+        "analysis":  clean_analysis,
+        "cache":     clean_pycache,
     }
 
-    targets = list(dispatch.keys()) if "all" in levels else [l for l in levels if l in dispatch]
+    targets = list(dispatch.keys()) if "all" in levels else [
+        lv for lv in levels if lv in dispatch
+    ]
 
     for target in targets:
         if dry_run:
@@ -236,13 +263,18 @@ def clean(levels: list[str], dry_run: bool = False):
 
 
 # =========================================================
-# GENERATION PIPELINE
+# GENERATION
 # =========================================================
 
-def run_generation(seed: int, n_repeats, skip_audio: bool = False, dry_run: bool = False):
+def run_generation(
+    seed: int,
+    n_repeats,
+    skip_audio: bool = False,
+    dry_run: bool = False,
+):
     if dry_run:
         log("🎛️  [DRY-RUN] Generation pipeline — no files will be written")
-        for label in ["run_experiment", "export_all MIDI", "convert_all audio", "build_audio_map", "save metadata"]:
+        for label in ["run_experiment", "export MIDI", "render audio", "build dataset"]:
             log(f"  → {label}", style="dim")
         return None
 
@@ -262,7 +294,6 @@ def run_generation(seed: int, n_repeats, skip_audio: bool = False, dry_run: bool
     if not skip_audio:
         if not check_soundfont():
             safe_exit(f"SoundFont not found: {SOUNDFONT_PATH}. Use --skip-audio to bypass.")
-
         with step("Render audio (WAV → MP3)"):
             convert_all(
                 midi_root=MIDI_DIR,
@@ -308,30 +339,36 @@ def sync_supabase(dry_run: bool = False):
         log("☁️  [DRY-RUN] Supabase sync skipped")
         return
 
-    from backend.dataset import load_dataset
+    import pandas as pd
     from infra.supabase_client import get_supabase
 
-    with step("Sync to Supabase"):
-        df = load_dataset()
+    with step("Sync stimuli metadata → Supabase"):
+        if not METADATA_PATH.exists():
+            safe_exit("metadata.csv not found. Run --generate first.")
+        df = pd.read_csv(METADATA_PATH)
         supabase = get_supabase()
         supabase.table("stimuli").upsert(df.to_dict(orient="records")).execute()
 
-    log(f"✔ Synced {len(df)} rows")
+    log(f"✔ Synced {len(df)} rows to Supabase")
 
 
 # =========================================================
 # REGRESSION
 # =========================================================
 
-def run_regression_step(dry_run: bool = False):
+def run_regression_step(
+    feature_set: str = "all",
+    refresh: bool = False,
+    dry_run: bool = False,
+):
     if dry_run:
         log("📈 [DRY-RUN] Regression skipped")
         return
 
     from regression.run import run_regression
 
-    with step("Regression"):
-        result = run_regression()
+    with step(f"Regression [features={feature_set}]"):
+        result = run_regression(feature_set=feature_set, refresh=refresh)
 
     return result
 
@@ -340,28 +377,27 @@ def run_regression_step(dry_run: bool = False):
 # PERCEPTION
 # =========================================================
 
-def run_perception(dry_run: bool = False):
+def run_perception(refresh: bool = False, dry_run: bool = False):
     if dry_run:
         log("🧠 [DRY-RUN] Perception pipeline skipped")
         return None, None
 
-    from backend.dataset import load_dataset
     import pandas as pd
     from perception.loader import load_perceptual_dataset
     from perception.alignment import fit_alignment
     from perception.metrics import cluster_perception_diff
-
-    with step("Load embeddings"):
-        Z, stimulus_ids = load_dataset(return_embeddings=True)
-        df = pd.DataFrame(Z, columns=["z1", "z2", "z3"])
-        df["stimulus_id"] = stimulus_ids
+    from config import METADATA_PATH
 
     with step("Load perceptual dataset"):
-        df = load_perceptual_dataset(df)
+        meta = pd.read_csv(METADATA_PATH)
+        if "stim_id" not in meta.columns and "id" in meta.columns:
+            meta = meta.rename(columns={"id": "stim_id"})
+        df = load_perceptual_dataset(embedding_df=meta, refresh=refresh)
 
     with step("Fit alignment"):
-        Z = df[["z1", "z2", "z3"]].values
-        ratings = df["rating"].values
+        feature_cols = [c for c in ["D", "I", "V", "S_real", "E_real"] if c in df.columns]
+        Z = df[feature_cols].values
+        ratings = df["groove_mean"].values
         model, score = fit_alignment(Z, ratings)
 
     log(f"📊 Perceptual alignment R²: {score:.4f}")
@@ -385,7 +421,6 @@ def preview(seed: int = 42, dry_run: bool = False):
     from groove.generator import Grid, Voices, MicroTiming, Stimulus
     from audio.midi_export import export_all
     from audio.mp3 import convert_all
-
     import numpy as np
     import pandas as pd
 
@@ -426,7 +461,7 @@ def preview(seed: int = 42, dry_run: bool = False):
 
 
 # =========================================================
-# MAIN
+# ARGUMENT PARSER
 # =========================================================
 
 def build_parser() -> argparse.ArgumentParser:
@@ -439,86 +474,117 @@ Examples:
   python cli.py --generate --seed 42 --repeats 8
   python cli.py --analysis --analysis-mode full
   python cli.py --generate --analysis --sync
+  python cli.py --regression --feature-set design
+  python cli.py --perception --refresh
   python cli.py --clean all
+  python cli.py --clean responses          # vide le cache local Supabase
   python cli.py --generate --dry-run
   python cli.py --status
         """,
     )
 
-    # Pipeline
+    # ── Pipeline ─────────────────────────────────────────
     pipeline = parser.add_argument_group("Pipeline")
     pipeline.add_argument("--generate",      action="store_true", help="Run generation pipeline")
     pipeline.add_argument("--analysis",      action="store_true", help="Run analysis pipeline")
-    pipeline.add_argument("--analysis-only", action="store_true", help="Run analysis only (alias)")
+    pipeline.add_argument("--analysis-only", action="store_true", help="Alias for --analysis")
     pipeline.add_argument("--preview",       action="store_true", help="Generate preview stimuli")
 
-    # Generation options
+    # ── Generation ───────────────────────────────────────
     gen = parser.add_argument_group("Generation options")
     gen.add_argument("--seed",       type=int, default=42,   help="Random seed (default: 42)")
-    gen.add_argument("--repeats",    type=int, default=None, help="Number of repeats")
+    gen.add_argument("--repeats",    type=int, default=None, help="Number of repeats per condition")
     gen.add_argument("--skip-audio", action="store_true",    help="Skip WAV/MP3 rendering")
 
-    # Analysis options
+    # ── Analysis ─────────────────────────────────────────
     ana = parser.add_argument_group("Analysis options")
-    ana.add_argument("--analysis-mode", default="audio", choices=["full", "audio", "groove"],
-                     help="Analysis mode (default: audio)")
-    ana.add_argument("--steps", nargs="+", metavar="STEP",
-                     help="Custom analysis steps: embeddings projection clustering metrics_view viz export")
+    ana.add_argument(
+        "--analysis-mode",
+        default="audio",
+        choices=["full", "audio", "groove"],
+        help="Analysis mode (default: audio)",
+    )
+    ana.add_argument(
+        "--steps",
+        nargs="+",
+        metavar="STEP",
+        help="Custom steps: embeddings projection clustering metrics_view viz export",
+    )
 
-    # Optional modules
-    opt = parser.add_argument_group("Optional modules")
-    opt.add_argument("--sync",        action="store_true", help="Sync dataset to Supabase")
-    opt.add_argument("--regression",  action="store_true", help="Run regression model")
-    opt.add_argument("--perception",  action="store_true", help="Run perceptual alignment")
+    # ── Modelling ────────────────────────────────────────
+    mod = parser.add_argument_group("Modelling")
+    mod.add_argument("--regression",  action="store_true", help="Run regression model")
+    mod.add_argument(
+        "--feature-set",
+        default="all",
+        choices=["design", "acoustic", "all"],
+        help="Feature set for regression (default: all)",
+    )
+    mod.add_argument("--perception",  action="store_true", help="Run perceptual alignment")
 
-    # Maintenance
+    # ── Infra ────────────────────────────────────────────
+    infra = parser.add_argument_group("Infra")
+    infra.add_argument("--sync",    action="store_true", help="Sync stimuli metadata → Supabase")
+    infra.add_argument("--refresh", action="store_true", help="Re-fetch réponses depuis Supabase (ignore le cache local)")
+
+    # ── Maintenance ──────────────────────────────────────
     maint = parser.add_argument_group("Maintenance")
-    maint.add_argument("--clean", nargs="*",
-                       choices=["all", "outputs", "metadata", "analysis", "cache"],
-                       metavar="TARGET",
-                       help="Clean targets: all outputs metadata analysis cache")
-    maint.add_argument("--status",   action="store_true", help="Print system status")
-    maint.add_argument("--dry-run",  action="store_true", help="Show what would run, without executing")
+    maint.add_argument(
+        "--clean",
+        nargs="*",
+        choices=["all", "outputs", "metadata", "responses", "analysis", "cache"],
+        metavar="TARGET",
+        help="Clean: all outputs metadata responses analysis cache",
+    )
+    maint.add_argument("--status",  action="store_true", help="Print system status")
+    maint.add_argument("--dry-run", action="store_true", help="Show what would run, without executing")
 
     return parser
 
 
+# =========================================================
+# MAIN
+# =========================================================
+
 def main():
     parser = build_parser()
     args = parser.parse_args()
-
     dry = args.dry_run
 
     if dry:
-        log("🔍 DRY-RUN mode — no files will be written, no imports executed", style="bold yellow")
+        log("🔍 DRY-RUN mode — no files will be written", style="bold yellow")
 
-    # ── STATUS ───────────────────────────────────────────
+    # ── Status ───────────────────────────────────────────
     if args.status:
         print_status()
         return
 
-    # ── CLEAN ────────────────────────────────────────────
+    # ── Clean ────────────────────────────────────────────
     if args.clean is not None:
         clean(args.clean or ["all"], dry_run=dry)
         return
 
-    # ── PREVIEW ──────────────────────────────────────────
+    # ── Preview ──────────────────────────────────────────
     if args.preview:
         if not dry:
             ensure_data_dirs()
         preview(seed=args.seed, dry_run=dry)
         return
 
-    # ── NOTHING SPECIFIED ────────────────────────────────
+    # ── Nothing specified ────────────────────────────────
     nothing = not any([
-        args.generate, args.analysis, args.analysis_only,
-        args.sync, args.regression, args.perception,
+        args.generate,
+        args.analysis,
+        args.analysis_only,
+        args.sync,
+        args.regression,
+        args.perception,
     ])
     if nothing:
         parser.print_help()
         return
 
-    # ── GENERATION ───────────────────────────────────────
+    # ── Generation ───────────────────────────────────────
     if args.generate:
         run_generation(
             seed=args.seed,
@@ -527,7 +593,7 @@ def main():
             dry_run=dry,
         )
 
-    # ── ANALYSIS ─────────────────────────────────────────
+    # ── Analysis ─────────────────────────────────────────
     if args.analysis or args.analysis_only:
         run_analysis(
             steps=args.steps,
@@ -535,16 +601,23 @@ def main():
             dry_run=dry,
         )
 
-    # ── OPTIONAL MODULES ─────────────────────────────────
+    # ── Sync ─────────────────────────────────────────────
     if args.sync:
         sync_supabase(dry_run=dry)
 
+    # ── Regression ───────────────────────────────────────
     if args.regression:
-        run_regression_step(dry_run=dry)
+        run_regression_step(
+            feature_set=args.feature_set,
+            refresh=args.refresh,
+            dry_run=dry,
+        )
 
+    # ── Perception ───────────────────────────────────────
     if args.perception:
-        run_perception(dry_run=dry)
+        run_perception(refresh=args.refresh, dry_run=dry)
 
+    # ── Done ─────────────────────────────────────────────
     if RICH:
         console.print("\n[bold green]🔥 DONE[/bold green]\n")
     else:

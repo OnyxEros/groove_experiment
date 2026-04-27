@@ -1,150 +1,308 @@
+/* ============================================================
+   app.js — Groove Study
+   ============================================================ */
+
+'use strict';
+
+/* ── State ──────────────────────────────────────────────── */
 let participant_id = null;
-let stimuli = [];
-let idx = 0;
-let start_time = 0;
-let canRespond = false;
-let is_sending = false;
+let stimuli        = [];
+let idx            = 0;
+let start_time     = 0;
+let canRespond     = false;
+let is_sending     = false;
+let currentAudio   = null;      // HTMLAudioElement actif
 
-/* ---------------- INIT ---------------- */
-
+/* ── Init ───────────────────────────────────────────────── */
 async function init() {
     try {
-        const p = await fetch("/new_participant").then(r => r.json());
+        const p  = await fetch('/new_participant').then(r => r.json());
         participant_id = p.participant_id;
 
-        stimuli = await fetch("/stimuli?n=20").then(r => r.json());
+        stimuli = await fetch('/stimuli?n=20').then(r => r.json());
         shuffle(stimuli);
 
+        // Préchargement discret du premier audio
+        if (stimuli.length > 0) preloadOne(stimuli[0]);
+
     } catch (e) {
-        alert("Erreur de chargement. Recharge la page.");
-        console.error(e);
+        console.error('Init error:', e);
+        showError('Erreur de chargement. Recharge la page.');
     }
 }
 
-/* ---------------- START ---------------- */
+/* ── Start ──────────────────────────────────────────────── */
+function startExperiment() {
+    document.getElementById('intro').style.display = 'none';
 
-function start() {
-    document.getElementById("intro").style.display = "none";
-    document.getElementById("task").style.display = "block";
+    const task = document.getElementById('task');
+    task.style.display = 'block';
+    task.classList.add('screen');
+
     render();
 }
 
-/* ---------------- RENDER ---------------- */
-
+/* ── Render ─────────────────────────────────────────────── */
 function render() {
-
     if (idx >= stimuli.length) {
-        document.getElementById("app").innerHTML =
-            "<h2>Merci 🙏</h2><div class='subtitle'>Expérience terminée</div>";
+        showThanks();
         return;
     }
 
-    let s = stimuli[idx];
+    const s = stimuli[idx];
+    const pct = Math.round((idx / stimuli.length) * 100);
 
-    let progress = Math.round((idx / stimuli.length) * 100);
-    document.getElementById("progress").style.width = progress + "%";
-
-    document.getElementById("counter").innerText =
-        `Extrait ${idx+1} / ${stimuli.length}`;
+    // Progress
+    document.getElementById('progress').style.width    = pct + '%';
+    document.getElementById('counter-left').textContent = `Extrait ${idx + 1} / ${stimuli.length}`;
+    document.getElementById('counter-right').textContent = pct + '%';
 
     canRespond = false;
 
-    document.getElementById("content").innerHTML = `
-        <audio id="audio" controls autoplay>
-            <source src="${s.audio_url}">
-        </audio>
+    // Préchargement du suivant
+    if (idx + 1 < stimuli.length) preloadOne(stimuli[idx + 1]);
 
-        <div class="slider-block">
-            <label>Groove</label>
-            <div class="scale-labels"><span>Faible</span><span>Fort</span></div>
-            <input type="range" id="g" min="1" max="7" value="4">
-        </div>
+    document.getElementById('content').innerHTML = buildTrialHTML(s, idx);
 
-        <div class="slider-block">
-            <label>Complexité</label>
-            <div class="scale-labels"><span>Simple</span><span>Complexe</span></div>
-            <input type="range" id="c" min="1" max="7" value="4">
-        </div>
-
-        <button onclick="send()" id="btn" disabled>Écoute en cours...</button>
-    `;
-
-    let audio = document.getElementById("audio");
-
-    audio.oncanplaythrough = () => {
-        start_time = Date.now();
-
-        // petit délai pour éviter réponses instantanées
-        setTimeout(() => {
-            canRespond = true;
-            document.getElementById("btn").disabled = false;
-            document.getElementById("btn").innerText = "Continuer";
-        }, 800);
-    };
+    // Bind player
+    mountPlayer(s.audio_url);
 }
 
-/* ---------------- SEND ---------------- */
+/* ── Build trial HTML ───────────────────────────────────── */
+function buildTrialHTML(s, i) {
+    return `
+        <div class="screen">
+            <!-- Player -->
+            <div class="player" id="player">
+                <button class="play-btn" id="play-btn" onclick="togglePlay()" aria-label="Lecture">
+                    ▶
+                </button>
+                <div class="player-info">
+                    <div class="player-title">Extrait ${i + 1}</div>
+                    <div class="player-bar-track">
+                        <div class="player-bar-fill" id="player-fill"></div>
+                    </div>
+                    <div class="waveform" id="waveform">${buildWaveform()}</div>
+                </div>
+            </div>
 
+            <audio id="audio" preload="auto">
+                <source src="${escHtml(s.audio_url)}" type="audio/mpeg">
+            </audio>
+
+            <!-- Sliders -->
+            <div class="slider-block">
+                <div class="slider-header">
+                    <span class="slider-label">Groove</span>
+                    <span class="slider-value" id="gv">4</span>
+                </div>
+                <div class="scale-labels">
+                    <span>Faible</span>
+                    <span>Fort</span>
+                </div>
+                <input type="range" id="g" min="1" max="7" value="4"
+                       oninput="document.getElementById('gv').textContent=this.value">
+            </div>
+
+            <div class="slider-block">
+                <div class="slider-header">
+                    <span class="slider-label">Complexité</span>
+                    <span class="slider-value" id="cv">4</span>
+                </div>
+                <div class="scale-labels">
+                    <span>Simple</span>
+                    <span>Complexe</span>
+                </div>
+                <input type="range" id="c" min="1" max="7" value="4"
+                       oninput="document.getElementById('cv').textContent=this.value">
+            </div>
+
+            <button class="btn" onclick="send()" id="btn" disabled>
+                Écoute en cours…
+            </button>
+        </div>
+    `;
+}
+
+/* ── Waveform decoration ────────────────────────────────── */
+function buildWaveform() {
+    const heights = [4, 7, 10, 14, 10, 16, 10, 7, 12, 16, 10, 7, 12, 8, 5];
+    return heights.map((h, i) =>
+        `<span style="height:${h}px;--d:${(0.5 + i * 0.07).toFixed(2)}s"></span>`
+    ).join('');
+}
+
+/* ── Audio player ───────────────────────────────────────── */
+function mountPlayer(url) {
+    const audio = document.getElementById('audio');
+    currentAudio = audio;
+
+    audio.addEventListener('canplaythrough', onCanPlay, { once: true });
+    audio.addEventListener('timeupdate', onTimeUpdate);
+    audio.addEventListener('ended', onEnded);
+    audio.addEventListener('error', onAudioError);
+
+    // Autoplay tentative (navigateurs modernes bloquent sans interaction)
+    audio.play().catch(() => {
+        /* silencieux — l'utilisateur cliquera sur play */
+    });
+}
+
+function onCanPlay() {
+    start_time = Date.now();
+    setTimeout(() => {
+        canRespond = true;
+        const btn = document.getElementById('btn');
+        if (btn) {
+            btn.disabled = false;
+            btn.textContent = 'Continuer →';
+        }
+    }, 800);
+
+    const player = document.getElementById('player');
+    const playBtn = document.getElementById('play-btn');
+    if (player) player.classList.add('playing');
+    if (playBtn) { playBtn.textContent = '⏸'; playBtn.classList.add('playing'); }
+}
+
+function onTimeUpdate() {
+    const audio = currentAudio;
+    if (!audio || !audio.duration) return;
+    const pct = (audio.currentTime / audio.duration) * 100;
+    const fill = document.getElementById('player-fill');
+    if (fill) fill.style.width = pct + '%';
+}
+
+function onEnded() {
+    const player  = document.getElementById('player');
+    const playBtn = document.getElementById('play-btn');
+    if (player)  player.classList.remove('playing');
+    if (playBtn) { playBtn.textContent = '▶'; playBtn.classList.remove('playing'); }
+}
+
+function onAudioError() {
+    const btn = document.getElementById('btn');
+    if (btn) {
+        btn.disabled = false;
+        btn.textContent = 'Continuer →';
+        canRespond = true;
+    }
+    console.warn('Audio load error for:', currentAudio?.src);
+}
+
+function togglePlay() {
+    const audio   = currentAudio;
+    const player  = document.getElementById('player');
+    const playBtn = document.getElementById('play-btn');
+    if (!audio) return;
+
+    if (audio.paused) {
+        audio.play().then(() => {
+            player?.classList.add('playing');
+            if (playBtn) { playBtn.textContent = '⏸'; playBtn.classList.add('playing'); }
+        }).catch(console.error);
+    } else {
+        audio.pause();
+        player?.classList.remove('playing');
+        if (playBtn) { playBtn.textContent = '▶'; playBtn.classList.remove('playing'); }
+    }
+}
+
+/* ── Send response ──────────────────────────────────────── */
 async function send() {
-
     if (!canRespond || is_sending) return;
-
     is_sending = true;
 
-    let s = stimuli[idx];
-    let rt = (Date.now() - start_time) / 1000;
+    const s   = stimuli[idx];
+    const rt  = (Date.now() - start_time) / 1000;
+    const btn = document.getElementById('btn');
 
-    let btn = document.getElementById("btn");
-    btn.disabled = true;
-    btn.innerText = "Envoi...";
+    if (btn) { btn.disabled = true; btn.textContent = 'Envoi…'; }
+
+    // Stop audio proprement
+    if (currentAudio) {
+        currentAudio.pause();
+        currentAudio.src = '';
+        currentAudio = null;
+    }
 
     const payload = {
         participant_id: participant_id,
-        stim_id: s.stim_id || s.audio_file,
-        groove: Number(document.getElementById("g").value),
-        complexity: Number(document.getElementById("c").value),
-        rt: rt,
-        order: idx,
-        timestamp: Date.now()
+        stim_id:        s.stim_id || s.audio_file || String(idx),
+        groove:         Number(document.getElementById('g').value),
+        complexity:     Number(document.getElementById('c').value),
+        rt:             parseFloat(rt.toFixed(3)),
     };
 
     try {
-        await fetch("/response", {
-            method: "POST",
-            headers: {"Content-Type": "application/json"},
-            body: JSON.stringify(payload)
+        const res = await fetch('/response', {
+            method:  'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body:    JSON.stringify(payload),
         });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
     } catch (e) {
-        console.error("Erreur envoi:", e);
-        alert("Problème réseau, réessaye.");
+        console.error('Send error:', e);
         is_sending = false;
-        btn.disabled = false;
-        btn.innerText = "Continuer";
+        if (btn) { btn.disabled = false; btn.textContent = 'Réessayer'; }
         return;
     }
 
     idx++;
 
-    // fixation croix (important cognitivement)
-    document.getElementById("content").innerHTML =
-        "<div style='text-align:center;opacity:0.5;font-size:24px;'>+</div>";
+    // Fixation cross
+    document.getElementById('content').innerHTML =
+        `<div class="fixation">+</div>`;
 
     setTimeout(() => {
         is_sending = false;
         render();
-    }, 500);
+    }, 550);
 }
 
-/* ---------------- UTIL ---------------- */
+/* ── Thank you ──────────────────────────────────────────── */
+function showThanks() {
+    document.getElementById('task').innerHTML = `
+        <div class="thanks screen">
+            <div class="big">🙏</div>
+            <h2>Merci pour votre participation</h2>
+            <p style="margin-top:12px;">
+                Vos réponses ont été enregistrées.<br>
+                Vous pouvez fermer cette page.
+            </p>
+        </div>
+    `;
+}
 
+/* ── Helpers ────────────────────────────────────────────── */
 function shuffle(a) {
     for (let i = a.length - 1; i > 0; i--) {
         const j = Math.floor(Math.random() * (i + 1));
         [a[i], a[j]] = [a[j], a[i]];
     }
+    return a;
 }
 
-/* ---------------- START ---------------- */
+function preloadOne(s) {
+    if (!s?.audio_url) return;
+    const a = new Audio();
+    a.preload = 'auto';
+    a.src = s.audio_url;
+}
 
+function escHtml(str) {
+    return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/"/g, '&quot;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
+}
+
+function showError(msg) {
+    document.getElementById('app').innerHTML =
+        `<div class="card" style="text-align:center;color:var(--muted)">${msg}</div>`;
+}
+
+/* ── Boot ───────────────────────────────────────────────── */
 init();

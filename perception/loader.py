@@ -1,20 +1,79 @@
-import numpy as np
 import pandas as pd
+from pathlib import Path
+
 from perception.supabase_io import fetch_ratings
+from config import METADATA_PATH
 
 
-def load_perceptual_dataset(embedding_df):
+def load_ratings_df(refresh: bool = False) -> pd.DataFrame:
     """
-    Merge embeddings with human ratings.
+    Retourne les ratings agrégés par stim_id (moyenne inter-participants).
+
+    Colonnes : stim_id, groove_mean, groove_std, complexity_mean, n_participants
+
+    Args:
+        refresh: si True, re-fetch depuis Supabase même si le cache existe.
     """
+    df = fetch_ratings(refresh=refresh)
 
-    ratings = fetch_ratings()
+    agg = (
+        df.groupby("stim_id")
+        .agg(
+            groove_mean=("groove", "mean"),
+            groove_std=("groove", "std"),
+            complexity_mean=("complexity", "mean") if "complexity" in df.columns else ("groove", "count"),
+            n_participants=("participant_id", "nunique"),
+        )
+        .reset_index()
+    )
 
-    ratings_df = pd.DataFrame(ratings)
+    return agg
 
-    if "stimulus_id" not in embedding_df.columns:
-        raise ValueError("embedding_df must contain stimulus_id")
 
-    df = embedding_df.merge(ratings_df, on="stimulus_id")
+def load_perceptual_dataset(
+    embedding_df: pd.DataFrame | None = None,
+    refresh: bool = False,
+) -> pd.DataFrame:
+    """
+    Joint les métriques des stimuli avec les ratings perceptifs.
+
+    Si embedding_df est fourni, il doit contenir 'stim_id'.
+    Sinon, charge metadata.csv automatiquement.
+
+    Args:
+        embedding_df: DataFrame optionnel avec features/embeddings des stimuli.
+        refresh:      forcer un re-fetch Supabase.
+
+    Returns:
+        DataFrame joint : features stimuli + groove_mean + groove_std + n_participants
+    """
+    if embedding_df is None:
+        meta_path = Path(METADATA_PATH)
+        if not meta_path.exists():
+            raise FileNotFoundError(
+                f"metadata.csv introuvable : {meta_path}\n"
+                "Lance d'abord : python cli.py --generate"
+            )
+        embedding_df = pd.read_csv(meta_path)
+
+    if "stim_id" not in embedding_df.columns:
+        raise ValueError(
+            "embedding_df doit contenir une colonne 'stim_id'. "
+            f"Colonnes disponibles : {list(embedding_df.columns)}"
+        )
+
+    ratings = load_ratings_df(refresh=refresh)
+
+    if ratings.empty:
+        raise ValueError("Aucune donnée perceptive disponible après agrégation.")
+
+    df = embedding_df.merge(ratings, on="stim_id", how="inner")
+
+    if df.empty:
+        raise ValueError(
+            "La jointure metadata × ratings est vide.\n"
+            "Vérifie que les stim_id dans metadata.csv correspondent "
+            "à ceux stockés dans Supabase."
+        )
 
     return df
