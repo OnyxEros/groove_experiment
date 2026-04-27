@@ -73,13 +73,17 @@ def load_regression_data(
     # stim_id : utilise la colonne 'id' de metadata si stim_id absent
     if "stim_id" not in meta.columns:
         if "id" in meta.columns:
-            meta = meta.rename(columns={"id": "stim_id"})
+            from pathlib import Path
+            meta["stim_id"] = meta["mp3_path"].apply(lambda p: Path(p).name)
+        elif "id" in meta.columns:
+            meta["stim_id"] = meta["id"].astype(str)
         else:
             raise ValueError(
                 "metadata.csv doit contenir une colonne 'id' ou 'stim_id'.\n"
                 f"Colonnes disponibles : {list(meta.columns)}"
             )
-
+    
+    meta["stim_id"] = meta["stim_id"].astype(str)
     df = load_perceptual_dataset(embedding_df=meta, refresh=refresh)
 
     # --- filtre qualité ---

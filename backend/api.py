@@ -11,6 +11,13 @@ from config import MP3_DIR, METADATA_PATH, INDEX_PATH
 from backend.models import Response
 from infra.supabase_client import insert_response
 
+# 👉 NEW: design system import (safe fallback)
+try:
+    from backend.design.registry import StimulusRegistry
+    DESIGN_MODE = True
+except Exception:
+    DESIGN_MODE = False
+
 
 # =========================================================
 # APP
@@ -38,15 +45,28 @@ def startup():
 
     app.state.df_global = df
 
+    # =====================================================
+    # NEW: experimental design pre-generation
+    # =====================================================
+    if DESIGN_MODE:
+        registry = StimulusRegistry()
+        stimuli = registry.build_stimuli(n_variants=3, seed=42)
+
+        if len(stimuli) > 0:
+            app.state.stimuli = stimuli
+            print(f"🎧 Design system active → {len(stimuli)} stimuli")
+        else:
+            print("⚠️ Design system empty → fallback to dataframe sampling")
+            app.state.stimuli = None
+    else:
+        app.state.stimuli = None
+
 
 # =========================================================
 # STATIC FILES
 # =========================================================
 
-# audio files
 app.mount("/audio", StaticFiles(directory=str(MP3_DIR)), name="audio")
-
-# JS frontend
 app.mount("/static", StaticFiles(directory="backend/static"), name="static")
 
 
@@ -63,12 +83,33 @@ def new_participant():
 
 
 # =========================================================
-# STIMULI
+# STIMULI (UPDATED)
 # =========================================================
 
 @app.get("/stimuli")
-def get_stimuli(n: int = 20):
+def get_stimuli(n: int = 24):
 
+    import random
+
+    # =====================================================
+    # MODE 1: DESIGN CONTROLLED (NEW)
+    # =====================================================
+    if hasattr(app.state, "stimuli") and app.state.stimuli is not None:
+        stimuli = app.state.stimuli
+
+        n = min(n, len(stimuli))
+        sample = stimuli[:n]   # deterministic order (can shuffle if needed)
+        random.shuffle(sample)
+
+        for s in sample:
+            if "mp3_path" in s:
+                s["audio_url"] = f"/audio/{Path(s['mp3_path']).name}"
+
+        return sample
+
+    # =====================================================
+    # MODE 2: FALLBACK (OLD BEHAVIOR)
+    # =====================================================
     df = app.state.df_global
     n = min(n, len(df))
 
@@ -112,9 +153,8 @@ def save_response(resp: Response):
 
 
 # =========================================================
-# FRONTEND (HTML FILE)
+# FRONTEND
 # =========================================================
-
 
 @app.get("/", response_class=HTMLResponse)
 def home():

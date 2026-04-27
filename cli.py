@@ -335,21 +335,35 @@ def run_analysis(steps=None, mode: str = "audio", dry_run: bool = False):
 # =========================================================
 
 def sync_supabase(dry_run: bool = False):
-    if dry_run:
-        log("☁️  [DRY-RUN] Supabase sync skipped")
-        return
+    """
+    Récupère les réponses depuis Supabase et les stocke en cache local.
+    Aucun write vers Supabase (mode local-first).
+    """
 
     import pandas as pd
-    from infra.supabase_client import get_supabase
+    from pathlib import Path
+    from infra.supabase_client import fetch_responses
+    from config import RESP_FILE
 
-    with step("Sync stimuli metadata → Supabase"):
-        if not METADATA_PATH.exists():
-            safe_exit("metadata.csv not found. Run --generate first.")
-        df = pd.read_csv(METADATA_PATH)
-        supabase = get_supabase()
-        supabase.table("stimuli").upsert(df.to_dict(orient="records")).execute()
+    cache_path = Path(RESP_FILE)
 
-    log(f"✔ Synced {len(df)} rows to Supabase")
+    if dry_run:
+        log("☁️  [DRY-RUN] Fetch Supabase → local cache (responses)")
+        return
+
+    with step("Fetch responses → Supabase"):
+        data = fetch_responses()
+
+        if not data:
+            safe_exit("Aucune réponse trouvée dans Supabase (table 'responses' vide).")
+
+        df = pd.DataFrame(data)
+
+    with step("Write local cache"):
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        df.to_csv(cache_path, index=False)
+
+    log(f"✔ Fetched {len(df)} responses → {cache_path}")
 
 
 # =========================================================
