@@ -56,30 +56,87 @@ class Voices:
         return p
 
     def hihat(self, sync_level=0, density_level=1, seed=None):
-
+        """
+        Generate hi-hat pattern with controlled syncopation and density.
+    
+        sync_level controls BOTH:
+        - Probability modulation (original behavior - preserves musicality)
+        - Explicit offbeat placement (new - adds real syncopation)
+    
+        density_level controls overall note density via base probability.
+        """
+    
         rng = np.random.default_rng(seed)
         p = self.empty()
 
-        # D_mv contrôle directement la probabilité de tirage
+        # Base density controlled by D_mv
         density_map = {0: 0.3, 1: 0.5, 2: 0.7}
         base_prob = density_map.get(density_level, 0.5)
 
+        # Base pattern: 8th notes on even subdivisions
         pattern = np.zeros(self.steps_per_bar)
-        pattern[::2] = 1  # 8th notes
+        pattern[::2] = 1  # positions 0, 2, 4, 6, 8, 10, 12, 14
+
+        # =====================================================
+        # SYNCOPATION CONTROL (NEW + PRESERVED)
+        # =====================================================
+    
+        # Syncopation map: probability of placing notes on offbeats
+        # sync_level=0 → rare offbeats, sync_level=2 → frequent offbeats
+        offbeat_prob_map = {
+            0: 0.15,  # low syncopation: few offbeat hits
+            1: 0.35,  # medium syncopation
+            2: 0.55   # high syncopation: majority offbeat hits
+        }
+        offbeat_prob = offbeat_prob_map.get(sync_level, 0.25)
 
         for i in range(self.n_steps):
-
-            base = pattern[i % self.steps_per_bar]
+        
+            pos_in_bar = i % self.steps_per_bar
+            base = pattern[pos_in_bar]
+        
+            # Is this position an offbeat (16th note subdivision)?
+            is_offbeat = (pos_in_bar % 2 == 1)
+        
+            # Is this position a strong metrical position?
+            is_downbeat = (i % self.steps_per_bar == 0)
+            is_backbeat = (pos_in_bar == self.steps_per_bar // 4 or 
+                      pos_in_bar == 3 * self.steps_per_bar // 4)
+        
+            # =====================================================
+            # PROBABILITY CALCULATION
+            # =====================================================
+        
             prob = base_prob
-
+        
+            # Original modulation (PRESERVED - keeps musicality)
             if sync_level == 1:
                 prob *= (0.7 if i % 4 == 0 else 1.0)
             elif sync_level == 2:
                 prob *= (1.2 if i % 3 == 0 else 0.8)
-
+        
+            # Base pattern boost (on-beat 8th notes more likely)
             if base == 1:
                 prob *= 1.4
-
+        
+            # NEW: Explicit offbeat placement based on sync_level
+            if is_offbeat:
+                # Offbeat positions get probability boost proportional to sync_level
+                prob = max(prob, offbeat_prob)
+            
+                # Additional boost if near strong beats (creates swing feel)
+                if (pos_in_bar - 1) % 4 == 0:  # right after downbeat/backbeat
+                    prob *= 1.2
+        
+            # Reduce probability on strong beats when syncopation is high
+            # (creates more rhythmic tension)
+            if sync_level >= 1 and (is_downbeat or is_backbeat):
+                prob *= 0.85
+        
+            # =====================================================
+            # STOCHASTIC DRAW
+            # =====================================================
+        
             if rng.random() < prob:
                 p[i] = 1
 
