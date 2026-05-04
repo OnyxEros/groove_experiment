@@ -98,7 +98,7 @@ def get_stimuli(n: int = 24):
         stimuli = app.state.stimuli
 
         n = min(n, len(stimuli))
-        sample = stimuli[:n]   # deterministic order (can shuffle if needed)
+        sample = list(stimuli[:n])  # copie — ne pas muter app.state.stimuli
         random.shuffle(sample)
 
         for s in sample:
@@ -115,6 +115,9 @@ def get_stimuli(n: int = 24):
 
     sample = df.sample(n).copy()
 
+    if "stim_id" not in sample.columns and "id" in sample.columns:
+        sample["stim_id"] = sample["id"].apply(lambda i: f"stim_{int(i):04d}")
+
     sample["audio_url"] = sample["audio_file"].apply(
         lambda f: f"/audio/{f}"
     )
@@ -123,6 +126,42 @@ def get_stimuli(n: int = 24):
 
     return sample.to_dict(orient="records")
 
+
+
+
+# =========================================================
+# STIMULI EXAMPLE
+# =========================================================
+ 
+@app.get("/example")
+def get_example():
+    """
+    Retourne l'URL audio du stimulus le plus groove du dataset.
+    Critère : S_mv=2, D_mv=2, E=1.0 (anti-métrique, dense, micro-timing fort).
+    Fallback : le stimulus avec le S_real le plus élevé.
+    """
+    df = app.state.df_global
+ 
+    # Cherche le candidat idéal
+    mask = (df["S_mv"] == 2) & (df["D_mv"] == 2) & (df["E"] == 1.0)
+    candidates = df[mask]
+ 
+    if candidates.empty:
+        # Fallback : meilleur S_real global
+        row = df.loc[df["S_real"].idxmax()]
+    else:
+        # Parmi les candidats, prend celui avec S_real le plus élevé
+        row = candidates.loc[candidates["S_real"].idxmax()]
+ 
+    audio_file = row["audio_file"] if "audio_file" in row else f"stim_{int(row['id']):04d}.mp3"
+ 
+    return {
+        "audio_url": f"/audio/{audio_file}",
+        "stim_id":   str(row["id"]),
+        "S_mv":      int(row["S_mv"]),
+        "D_mv":      int(row["D_mv"]),
+        "E":         float(row["E"]),
+    }
 
 # =========================================================
 # RESPONSE → SUPABASE

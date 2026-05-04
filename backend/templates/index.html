@@ -5,26 +5,32 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Groove Study</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=DM+Mono:ital,wght@0,300;0,400;0,500;1,300&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@300;400;500&family=Instrument+Sans:wght@400;500;600&display=swap" rel="stylesheet">
 
 <style>
-/* ── Reset & tokens ──────────────────────────────────── */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
 :root {
-    --bg:         #080910;
-    --surface:    #0f1116;
-    --surface2:   #161820;
-    --border:     rgba(255,255,255,0.07);
-    --accent:     #5c7cff;
-    --accent-dim: rgba(92,124,255,0.15);
-    --text:       #f0f0f4;
-    --muted:      rgba(240,240,244,0.45);
-    --faint:      rgba(240,240,244,0.18);
-    --success:    #3ecf8e;
-    --radius:     14px;
-    --mono:       'DM Mono', monospace;
-    --sans:       'DM Sans', sans-serif;
+    --bg:          #07080c;
+    --surface:     #0d0f14;
+    --surface2:    #13151c;
+    --border:      rgba(255,255,255,0.06);
+    --border-hi:   rgba(255,255,255,0.12);
+    --accent:      #4f6ef7;
+    --accent-soft: rgba(79,110,247,0.12);
+    --accent-glow: rgba(79,110,247,0.25);
+    --green:       #34d399;
+    --green-soft:  rgba(52,211,153,0.12);
+    --text:        #ecedf2;
+    --muted:       rgba(236,237,242,0.5);
+    --faint:       rgba(236,237,242,0.2);
+    --ghost:       rgba(236,237,242,0.07);
+    --radius-sm:   10px;
+    --radius:      16px;
+    --radius-lg:   22px;
+    --mono:        'DM Mono', monospace;
+    --sans:        'Instrument Sans', sans-serif;
+    --t:           0.18s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 body {
@@ -34,155 +40,230 @@ body {
     min-height: 100dvh;
     display: flex;
     justify-content: center;
-    align-items: center;
-    padding: 20px;
-    /* Subtle grid noise */
+    align-items: flex-start;
+    padding: 24px 16px 56px;
     background-image:
-        radial-gradient(ellipse 80% 50% at 50% -10%, rgba(92,124,255,0.08), transparent),
-        linear-gradient(rgba(255,255,255,0.015) 1px, transparent 1px),
-        linear-gradient(90deg, rgba(255,255,255,0.015) 1px, transparent 1px);
-    background-size: 100% 100%, 32px 32px, 32px 32px;
+        radial-gradient(ellipse 70% 45% at 50% 0%, rgba(79,110,247,0.08) 0%, transparent 70%),
+        radial-gradient(ellipse 40% 25% at 85% 85%, rgba(52,211,153,0.03) 0%, transparent 60%);
 }
 
-/* ── Shell ───────────────────────────────────────────── */
-#app {
-    width: 100%;
-    max-width: 480px;
+#app { width: 100%; max-width: 456px; margin-top: 20px; }
+
+/* ── Card ────────────────────────────────────────────── */
+.card {
     background: var(--surface);
     border: 1px solid var(--border);
-    border-radius: 20px;
-    padding: 32px 28px;
+    border-radius: var(--radius-lg);
+    padding: 28px 24px;
     position: relative;
     overflow: hidden;
 }
 
-/* thin top accent line */
-#app::before {
+.card::before {
     content: '';
     position: absolute;
-    top: 0; left: 0; right: 0;
-    height: 2px;
+    top: 0; left: 15%; right: 15%;
+    height: 1px;
     background: linear-gradient(90deg, transparent, var(--accent), transparent);
-    opacity: 0.6;
+    opacity: 0.45;
 }
 
+/* ── Chip ────────────────────────────────────────────── */
+.chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-family: var(--mono);
+    font-size: 9px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--accent);
+    background: var(--accent-soft);
+    border: 1px solid rgba(79,110,247,0.22);
+    border-radius: 99px;
+    padding: 4px 11px;
+    margin-bottom: 16px;
+}
+
+.chip-dot {
+    width: 5px; height: 5px;
+    border-radius: 50%;
+    background: var(--accent);
+    animation: blink 2.4s ease-in-out infinite;
+}
+
+@keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.25} }
+
 /* ── Typography ──────────────────────────────────────── */
-h2 {
+h1 {
     font-family: var(--mono);
     font-weight: 400;
-    font-size: 18px;
-    letter-spacing: -0.01em;
-    text-align: center;
+    font-size: 22px;
+    letter-spacing: -0.02em;
     margin-bottom: 6px;
 }
 
-.eyebrow {
+h2 {
     font-family: var(--mono);
-    font-size: 10px;
-    letter-spacing: 0.12em;
-    text-transform: uppercase;
-    color: var(--accent);
-    text-align: center;
+    font-weight: 400;
+    font-size: 16px;
+    letter-spacing: -0.01em;
+    margin-bottom: 4px;
+}
+
+.sub {
+    font-size: 13px;
+    color: var(--muted);
+    line-height: 1.65;
     margin-bottom: 20px;
 }
 
-p, .body-text {
-    font-size: 14px;
-    line-height: 1.65;
-    color: var(--muted);
-}
+.divider { border: none; border-top: 1px solid var(--border); margin: 18px 0; }
 
-/* ── Cards ───────────────────────────────────────────── */
-.card {
-    background: var(--surface2);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    padding: 18px 20px;
-    font-size: 14px;
-    line-height: 1.7;
-    color: var(--muted);
+/* ── Info grid ───────────────────────────────────────── */
+.info-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
     margin-bottom: 18px;
 }
 
-.card b { color: var(--text); font-weight: 500; }
+.info-block {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 13px;
+}
 
-/* ── Button ──────────────────────────────────────────── */
+.ibl {
+    font-family: var(--mono);
+    font-size: 9px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin-bottom: 5px;
+}
+
+.idesc { font-size: 12px; color: var(--muted); line-height: 1.5; }
+
+/* ── Meta row ────────────────────────────────────────── */
+.meta-row {
+    display: flex;
+    justify-content: center;
+    gap: 18px;
+    margin-bottom: 20px;
+}
+
+.meta-item { font-family: var(--mono); font-size: 10px; color: var(--faint); }
+
+/* ── Buttons ─────────────────────────────────────────── */
 .btn {
-    display: block;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
     width: 100%;
-    padding: 14px;
+    padding: 15px;
     border: none;
     border-radius: var(--radius);
     background: var(--accent);
     color: #fff;
     font-family: var(--sans);
     font-size: 15px;
-    font-weight: 500;
+    font-weight: 600;
     cursor: pointer;
-    transition: opacity 0.15s, transform 0.1s;
-    margin-top: 20px;
-    letter-spacing: 0.01em;
+    transition: opacity var(--t), transform var(--t), box-shadow var(--t);
+    box-shadow: 0 4px 22px rgba(79,110,247,0.28);
 }
 
-.btn:hover:not(:disabled) { opacity: 0.88; transform: translateY(-1px); }
-.btn:active:not(:disabled) { transform: translateY(0); }
+.btn:hover:not(:disabled) {
+    opacity: 0.9;
+    transform: translateY(-1px);
+    box-shadow: 0 6px 30px rgba(79,110,247,0.38);
+}
+
+.btn:active:not(:disabled) { transform: translateY(0); box-shadow: none; }
+
 .btn:disabled {
     background: var(--surface2);
     color: var(--faint);
     border: 1px solid var(--border);
     cursor: not-allowed;
+    box-shadow: none;
+    transform: none;
+}
+
+.btn-ghost {
+    background: transparent;
+    color: var(--muted);
+    border: 1px solid var(--border);
+    box-shadow: none;
+    font-weight: 500;
+}
+
+.btn-ghost:hover:not(:disabled) {
+    border-color: var(--border-hi);
+    color: var(--text);
+    box-shadow: none;
+    transform: none;
+}
+
+.btn-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+    margin-top: 16px;
 }
 
 /* ── Progress ────────────────────────────────────────── */
-.progress-wrap {
-    margin-bottom: 20px;
+.progress-wrap { margin-bottom: 22px; }
+
+.progress-header {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 8px;
 }
 
-.progress-track {
-    height: 3px;
-    background: var(--border);
-    border-radius: 99px;
-    overflow: hidden;
-}
+.progress-label { font-family: var(--mono); font-size: 10px; color: var(--faint); letter-spacing: 0.05em; }
+.progress-pct   { font-family: var(--mono); font-size: 10px; color: var(--accent); }
+
+.progress-track { height: 2px; background: var(--ghost); border-radius: 99px; overflow: hidden; }
 
 .progress-fill {
     height: 100%;
-    background: var(--accent);
+    background: linear-gradient(90deg, var(--accent), #7b9bff);
     width: 0%;
-    transition: width 0.4s cubic-bezier(0.4,0,0.2,1);
+    transition: width 0.5s cubic-bezier(0.4,0,0.2,1);
     border-radius: 99px;
 }
 
-.progress-label {
-    display: flex;
-    justify-content: space-between;
-    font-family: var(--mono);
-    font-size: 10px;
-    color: var(--faint);
-    margin-top: 7px;
-    letter-spacing: 0.04em;
-}
-
-/* ── Audio player (custom) ───────────────────────────── */
+/* ── Player (réutilisé pour exemple + task) ──────────── */
 .player {
     background: var(--surface2);
     border: 1px solid var(--border);
     border-radius: var(--radius);
-    padding: 16px 20px;
+    padding: 14px 16px;
     display: flex;
     align-items: center;
     gap: 14px;
-    margin-bottom: 22px;
     position: relative;
     overflow: hidden;
+    transition: border-color var(--t);
 }
 
-/* animated waveform bars when playing */
+.player.playing  { border-color: rgba(79,110,247,0.32); }
+.player.waiting  { animation: pulse-border 2.2s ease-in-out infinite; }
+
+@keyframes pulse-border {
+    0%,100% { border-color: var(--border); }
+    50%      { border-color: rgba(79,110,247,0.28); }
+}
+
 .player::after {
     content: '';
     position: absolute;
     inset: 0;
-    background: linear-gradient(90deg, var(--accent-dim), transparent 60%);
+    background: linear-gradient(90deg, var(--accent-soft) 0%, transparent 55%);
     opacity: 0;
     transition: opacity 0.4s;
     pointer-events: none;
@@ -191,232 +272,379 @@ p, .body-text {
 .player.playing::after { opacity: 1; }
 
 .play-btn {
-    width: 40px;
-    height: 40px;
+    width: 38px; height: 38px;
     border-radius: 50%;
-    border: 1.5px solid var(--accent);
-    background: var(--accent-dim);
+    border: 1.5px solid rgba(79,110,247,0.4);
+    background: var(--accent-soft);
     color: var(--accent);
-    font-size: 15px;
+    font-size: 13px;
     cursor: pointer;
     display: flex;
     align-items: center;
     justify-content: center;
     flex-shrink: 0;
-    transition: background 0.15s, transform 0.1s;
+    transition: background var(--t), transform var(--t), box-shadow var(--t);
     position: relative;
     z-index: 1;
+    padding-left: 2px;
 }
 
-.play-btn:hover { background: rgba(92,124,255,0.25); transform: scale(1.05); }
-.play-btn.playing { background: var(--accent); color: #fff; }
-
-.player-info {
-    flex: 1;
-    min-width: 0;
-    position: relative;
-    z-index: 1;
+.play-btn:hover { background: var(--accent-glow); transform: scale(1.07); }
+.play-btn.playing {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #fff;
+    padding-left: 0;
+    box-shadow: 0 0 18px var(--accent-glow);
 }
 
-.player-title {
-    font-family: var(--mono);
-    font-size: 11px;
-    color: var(--muted);
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-    margin-bottom: 6px;
+.player-info { flex: 1; min-width: 0; position: relative; z-index: 1; }
+
+.player-meta {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 7px;
 }
 
-.player-bar-track {
-    height: 3px;
-    background: var(--border);
-    border-radius: 99px;
-    overflow: hidden;
-}
+.player-title { font-family: var(--mono); font-size: 10px; color: var(--faint); letter-spacing: 0.08em; text-transform: uppercase; }
+.player-time  { font-family: var(--mono); font-size: 10px; color: var(--faint); }
+
+.player-bar-track { height: 2px; background: var(--ghost); border-radius: 99px; overflow: hidden; cursor: pointer; }
 
 .player-bar-fill {
     height: 100%;
-    background: var(--accent);
+    background: linear-gradient(90deg, var(--accent), #7b9bff);
     width: 0%;
-    transition: width 0.25s linear;
     border-radius: 99px;
+    transition: width 0.15s linear;
 }
 
 .waveform {
     display: flex;
     align-items: center;
     gap: 2px;
-    height: 18px;
+    height: 14px;
     margin-top: 7px;
 }
 
 .waveform span {
     display: block;
     width: 2px;
-    background: var(--faint);
     border-radius: 1px;
+    background: var(--ghost);
+    transform-origin: center;
     transition: background 0.3s;
 }
 
 .player.playing .waveform span {
-    background: var(--accent);
-    animation: wave var(--d, 0.8s) ease-in-out infinite alternate;
+    background: rgba(79,110,247,0.7);
+    animation: wave var(--d, 0.9s) ease-in-out infinite alternate;
 }
 
-@keyframes wave {
-    from { transform: scaleY(0.3); }
-    to   { transform: scaleY(1); }
-}
+@keyframes wave { from{transform:scaleY(0.2)} to{transform:scaleY(1)} }
 
 audio { display: none; }
 
+.autoplay-hint {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--accent);
+    opacity: 0.8;
+    text-align: center;
+    margin-top: 8px;
+    display: none;
+}
+.autoplay-hint.visible { display: block; animation: fadein 0.4s ease 0.2s both; }
+
+/* ── Exemple groove block ────────────────────────────── */
+.example-block {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 16px;
+    margin-bottom: 18px;
+}
+
+.example-label {
+    font-family: var(--mono);
+    font-size: 9px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--green);
+    margin-bottom: 4px;
+}
+
+.example-desc {
+    font-size: 12px;
+    color: var(--muted);
+    line-height: 1.5;
+    margin-bottom: 12px;
+}
+
+/* player dans l'exemple — variante verte */
+.example-block .player {
+    margin-bottom: 0;
+}
+
+.example-block .player.playing {
+    border-color: rgba(52,211,153,0.3);
+}
+
+.example-block .player.playing::after {
+    background: linear-gradient(90deg, var(--green-soft) 0%, transparent 55%);
+}
+
+.example-block .play-btn {
+    border-color: rgba(52,211,153,0.4);
+    background: var(--green-soft);
+    color: var(--green);
+}
+
+.example-block .play-btn:hover { background: rgba(52,211,153,0.2); }
+
+.example-block .play-btn.playing {
+    background: var(--green);
+    border-color: var(--green);
+    color: #fff;
+    box-shadow: 0 0 18px rgba(52,211,153,0.3);
+}
+
+.example-block .player.playing .waveform span {
+    background: rgba(52,211,153,0.7);
+}
+
+.example-block .player-bar-fill {
+    background: linear-gradient(90deg, var(--green), #6ee7b7);
+}
+
+/* loading skeleton */
+.example-loading {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--faint);
+    text-align: center;
+    padding: 12px 0;
+    letter-spacing: 0.05em;
+    animation: fadein 0.3s ease;
+}
+
 /* ── Sliders ─────────────────────────────────────────── */
-.slider-block { margin: 20px 0; }
+.slider-block { margin: 18px 0; }
 
 .slider-header {
     display: flex;
     justify-content: space-between;
-    align-items: baseline;
-    margin-bottom: 8px;
+    align-items: center;
+    margin-bottom: 10px;
 }
 
-.slider-label {
-    font-size: 13px;
-    font-weight: 500;
-    color: var(--text);
-}
+.slider-label { font-size: 13px; font-weight: 600; color: var(--text); }
 
-.slider-value {
+.slider-pill {
     font-family: var(--mono);
-    font-size: 12px;
+    font-size: 11px;
     color: var(--accent);
-    min-width: 16px;
-    text-align: right;
+    background: var(--accent-soft);
+    border: 1px solid rgba(79,110,247,0.22);
+    border-radius: 99px;
+    padding: 2px 10px;
+    min-width: 30px;
+    text-align: center;
 }
 
-.scale-labels {
+.slider-anchors {
     display: flex;
     justify-content: space-between;
     font-family: var(--mono);
-    font-size: 10px;
+    font-size: 9px;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
     color: var(--faint);
-    letter-spacing: 0.04em;
     margin-bottom: 6px;
 }
 
+.slider-anchors span { opacity: 0.85; }
+.slider-anchors span:nth-child(2) { opacity: 0.45; }
+
 input[type=range] {
     -webkit-appearance: none;
+    appearance: none;
     width: 100%;
-    height: 4px;
-    background: var(--border);
+    height: 3px;
     border-radius: 99px;
     outline: none;
     cursor: pointer;
+    background: linear-gradient(
+        to right,
+        var(--accent) 0%,
+        var(--accent) var(--fill, 50%),
+        var(--ghost)  var(--fill, 50%),
+        var(--ghost)  100%
+    );
 }
 
 input[type=range]::-webkit-slider-thumb {
     -webkit-appearance: none;
-    width: 18px;
-    height: 18px;
+    width: 20px; height: 20px;
     border-radius: 50%;
-    background: var(--accent);
-    border: 2px solid var(--bg);
-    box-shadow: 0 0 0 0 rgba(92,124,255,0.4);
-    transition: box-shadow 0.2s;
+    background: #fff;
+    border: 2px solid var(--accent);
+    box-shadow: 0 2px 8px rgba(0,0,0,0.45);
     cursor: pointer;
+    transition: box-shadow var(--t), transform var(--t);
 }
 
-input[type=range]:focus::-webkit-slider-thumb,
-input[type=range]:hover::-webkit-slider-thumb {
-    box-shadow: 0 0 0 5px rgba(92,124,255,0.2);
+input[type=range]:hover::-webkit-slider-thumb,
+input[type=range]:focus::-webkit-slider-thumb {
+    box-shadow: 0 2px 8px rgba(0,0,0,0.45), 0 0 0 5px var(--accent-glow);
+    transform: scale(1.1);
 }
 
 input[type=range]::-moz-range-thumb {
-    width: 18px;
-    height: 18px;
+    width: 20px; height: 20px;
     border-radius: 50%;
-    background: var(--accent);
-    border: 2px solid var(--bg);
+    background: #fff;
+    border: 2px solid var(--accent);
     cursor: pointer;
 }
 
-/* ── Fixation cross ──────────────────────────────────── */
+/* ── Calibration block ───────────────────────────────── */
+.calib-block {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 16px;
+    margin: 14px 0;
+}
+
+.calib-lbl {
+    font-family: var(--mono);
+    font-size: 9px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--faint);
+    margin-bottom: 14px;
+}
+
+/* ── Fixation ────────────────────────────────────────── */
 .fixation {
     text-align: center;
-    padding: 40px 0;
-    font-size: 28px;
+    padding: 52px 0;
+    font-size: 24px;
     color: var(--faint);
-    animation: pulse-fix 0.5s ease-in-out;
+    animation: fix-in 0.22s ease;
 }
 
-@keyframes pulse-fix {
-    from { opacity: 0; transform: scale(0.8); }
-    to   { opacity: 1; transform: scale(1); }
-}
+@keyframes fix-in { from{opacity:0;transform:scale(0.65)} to{opacity:1;transform:scale(1)} }
 
-/* ── Screen transitions ──────────────────────────────── */
-.screen {
-    animation: fadein 0.3s ease;
-}
+/* ── Transitions ─────────────────────────────────────── */
+.screen { animation: fadein 0.26s cubic-bezier(0.4,0,0.2,1); }
 
-@keyframes fadein {
-    from { opacity: 0; transform: translateY(6px); }
-    to   { opacity: 1; transform: translateY(0); }
-}
-
-/* ── Divider ─────────────────────────────────────────── */
-.divider {
-    border: none;
-    border-top: 1px solid var(--border);
-    margin: 22px 0;
-}
+@keyframes fadein { from{opacity:0;transform:translateY(7px)} to{opacity:1;transform:translateY(0)} }
 
 /* ── Thank you ───────────────────────────────────────── */
-.thanks {
-    text-align: center;
-    padding: 20px 0;
-}
-
-.thanks .big { font-size: 36px; margin-bottom: 12px; }
+.thanks { text-align: center; padding: 20px 0 8px; }
+.thanks-icon { font-size: 38px; margin-bottom: 14px; }
+.thanks-detail { margin-top: 14px; font-family: var(--mono); font-size: 10px; color: var(--faint); letter-spacing: 0.05em; }
 </style>
 </head>
 
 <body>
 <div id="app">
 
-  <!-- ── INTRO ────────────────────────────────────────── -->
-  <div id="intro" class="screen">
-    <div class="eyebrow">Expérience de perception</div>
-    <h2>Groove Study</h2>
+  <!-- ── INTRO ─────────────────────────────────────────── -->
+  <div id="screen-intro" class="card screen">
+    <div class="chip"><span class="chip-dot"></span>Expérience de perception</div>
+    <h1>Groove Study</h1>
+    <p class="sub">Évaluation perceptive de rythmes musicaux générés.</p>
 
     <hr class="divider">
 
-    <div class="card">
-      Vous allez écouter <b>20 extraits</b> musicaux courts.<br><br>
-      Pour chacun, évaluez deux dimensions :
-      <br><br>
-      <b>Groove</b> &mdash; l'envie de bouger (taper du pied, hocher la tête).<br>
-      <b>Complexité</b> &mdash; la richesse ou simplicité du rythme perçu.
-      <br><br>
-      Répondez de façon <b>spontanée</b> — il n'y a pas de bonne réponse.
+    <div class="info-grid">
+      <div class="info-block">
+        <div class="ibl">Groove</div>
+        <div class="idesc">L'envie de bouger — taper du pied, hocher la tête, danser.</div>
+      </div>
+      <div class="info-block">
+        <div class="ibl">Complexité</div>
+        <div class="idesc">La richesse perçue du rythme — simple et répétitif ou dense et varié.</div>
+      </div>
     </div>
 
-    <p style="text-align:center; font-size:12px; color:var(--faint); margin-bottom:4px;">
-      Durée estimée : 8–12 minutes
-    </p>
+    <!-- Exemple groove -->
+    <div class="example-block">
+      <div class="example-label">Exemple — groove fort</div>
+      <div class="example-desc">
+        Voici un extrait à fort groove tiré de notre corpus. Écoutez-le pour calibrer votre référentiel avant de commencer.
+      </div>
+      <div id="example-container">
+        <div class="example-loading">Chargement de l'exemple…</div>
+      </div>
+      <div class="autoplay-hint" id="ex-hint">▶ Appuie sur play pour écouter</div>
+      <audio id="ex-audio" preload="auto"></audio>
+    </div>
 
-    <button class="btn" onclick="startExperiment()">Commencer &rarr;</button>
+    <div class="meta-row">
+      <div class="meta-item">🎧&nbsp;20 extraits</div>
+      <div class="meta-item">⏱&nbsp;8–12 min</div>
+      <div class="meta-item">🔊&nbsp;Son requis</div>
+    </div>
+
+    <button class="btn" onclick="goCalibration()">Commencer →</button>
   </div>
 
-  <!-- ── TASK ─────────────────────────────────────────── -->
-  <div id="task" style="display:none;">
+  <!-- ── CALIBRATION ────────────────────────────────────── -->
+  <div id="screen-calib" class="card screen" style="display:none;">
+    <div class="chip"><span class="chip-dot"></span>Prise en main</div>
+    <h2>Familiarisez-vous avec les curseurs</h2>
+    <p class="sub" style="margin-top:5px;">
+      Bougez les curseurs ci-dessous — vos réponses ici ne sont pas enregistrées.
+    </p>
+
+    <div class="calib-block">
+      <div class="calib-lbl">Exercice</div>
+
+      <div class="slider-block" style="margin-top:0">
+        <div class="slider-header">
+          <span class="slider-label">Groove</span>
+          <span class="slider-pill" id="cg-val">4</span>
+        </div>
+        <div class="slider-anchors">
+          <span>Faible</span><span>Modéré</span><span>Fort</span>
+        </div>
+        <input type="range" id="cg" min="1" max="7" value="4"
+               oninput="syncSlider(this,'cg-val')">
+      </div>
+
+      <div class="slider-block">
+        <div class="slider-header">
+          <span class="slider-label">Complexité</span>
+          <span class="slider-pill" id="cc-val">4</span>
+        </div>
+        <div class="slider-anchors">
+          <span>Simple</span><span>Modérée</span><span>Complexe</span>
+        </div>
+        <input type="range" id="cc" min="1" max="7" value="4"
+               oninput="syncSlider(this,'cc-val')">
+      </div>
+    </div>
+
+    <div class="btn-row">
+      <button class="btn btn-ghost" onclick="goIntro()">← Retour</button>
+      <button class="btn" onclick="startExperiment()">C'est parti →</button>
+    </div>
+  </div>
+
+  <!-- ── TASK ──────────────────────────────────────────── -->
+  <div id="screen-task" class="card" style="display:none;">
     <div class="progress-wrap">
+      <div class="progress-header">
+        <span class="progress-label" id="counter-left">Extrait 1 / 20</span>
+        <span class="progress-pct"   id="counter-right">0%</span>
+      </div>
       <div class="progress-track">
         <div class="progress-fill" id="progress"></div>
-      </div>
-      <div class="progress-label">
-        <span id="counter-left">Extrait 1 / 20</span>
-        <span id="counter-right">0%</span>
       </div>
     </div>
     <div id="content"></div>

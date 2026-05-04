@@ -3,18 +3,27 @@ groove/generator.py
 ===================
 Générateur de stimuli rythmiques pour l'expérience groove.
 
-Architecture :
-    Grid        — paramètres temporels (BPM, résolution)
-    Voices      — patterns rythmiques (kick, snare, hihat)
-    MicroTiming — déviations temporelles expressives
-    Stimulus    — assemblage d'un stimulus complet
-    Metrics     — métriques acoustiques extraites
-    build_design  — design expérimental factoriel
-    run_experiment — point d'entrée principal
+Tous les paramètres musicaux et expérimentaux proviennent de config.py.
+Ce fichier ne contient aucun magic number.
+
+Changelog v2.1 :
+    MicroTiming.apply() :
+        Swing baseline (SWING_BASELINE) appliqué indépendamment de E.
+        Swing total = SWING_BASELINE + SWING_MAX_RATIO × amount.
+        → E=0 sonne "tight humain" plutôt que "séquenceur quantisé".
+        → E reste une variable continue et interprétable.
+        → Toutes les conditions sonnent musicales.
+
+    Voices.hihat() : génération cyclique (inchangé depuis v2).
+    Stimulus.build() : P push/pull (inchangé depuis v2).
+    Metrics : P_real (inchangé depuis v2).
 """
 
-import numpy as np
+from __future__ import annotations
+
 import itertools
+
+import numpy as np
 import pandas as pd
 
 import config
@@ -25,13 +34,17 @@ import config
 # =========================================================
 
 class Grid:
-    def __init__(self):
-        self.steps_per_bar  = config.STEPS_PER_BAR
-        self.n_steps        = self.steps_per_bar * config.BARS
-        self.bpm            = config.BPM
-        self.step_duration  = config.step_duration_seconds()
-        # AMÉLIORATION : utilise la fonction centralisée plutôt que
-        # de recalculer 60 / (bpm * spb/4) en dur ici.
+    def __init__(self) -> None:
+        self.steps_per_bar = config.STEPS_PER_BAR
+        self.loop_steps    = config.loop_steps()
+        self.total_steps   = config.total_steps()
+        self.n_loops       = config.N_LOOPS
+        self.bpm           = config.BPM
+        self.step_duration = config.step_duration_seconds()
+
+    @property
+    def n_steps(self) -> int:
+        return self.total_steps
 
 
 # =========================================================
@@ -39,109 +52,61 @@ class Grid:
 # =========================================================
 
 class Voices:
-    def __init__(self, grid: Grid, seed=None):
-        self.n_steps       = grid.n_steps
+    def __init__(self, grid: Grid, seed: int | None = None) -> None:
+        self.total_steps   = grid.total_steps
         self.steps_per_bar = grid.steps_per_bar
-        self.rng           = np.random.default_rng(seed)
+        self.loop_steps    = grid.loop_steps
+        self.n_loops       = grid.n_loops
+        self._rng          = np.random.default_rng(seed)
 
-    # ── Helpers ──────────────────────────────────────────
-
-    def empty(self) -> np.ndarray:
-        return np.zeros(self.n_steps, dtype=np.float64)
-
-    # ── Kick ─────────────────────────────────────────────
+    def _empty(self) -> np.ndarray:
+        return np.zeros(self.total_steps, dtype=np.float64)
 
     def kick(self) -> np.ndarray:
-        """Kick sur les temps 1 et 3 (downbeat + midbeat)."""
-        p   = self.empty()
-        bar = self.steps_per_bar
-        for b in range(self.n_steps // bar):
-            o       = b * bar
-            p[o]            = 1   # temps 1
-            p[o + bar // 2] = 1   # temps 3
+        p, bar = self._empty(), self.steps_per_bar
+        for b in range(self.total_steps // bar):
+            o = b * bar
+            p[o]            = 1.0
+            p[o + bar // 2] = 1.0
         return p
-
-    # ── Snare ────────────────────────────────────────────
 
     def snare(self) -> np.ndarray:
-        """Snare sur les backbeats (temps 2 et 4)."""
-        p   = self.empty()
-        bar = self.steps_per_bar
-        for b in range(self.n_steps // bar):
-            o               = b * bar
-            p[o + bar // 4]     = 1   # temps 2
-            p[o + 3 * bar // 4] = 1   # temps 4
+        p, bar = self._empty(), self.steps_per_bar
+        for b in range(self.total_steps // bar):
+            o = b * bar
+            p[o + bar // 4]     = 1.0
+            p[o + 3 * bar // 4] = 1.0
         return p
-
-    # ── Hi-hat ───────────────────────────────────────────
 
     def hihat(
         self,
-        sync_level:    int = 0,
-        density_level: int = 1,
+        sync_level:    int        = 0,
+        density_level: int        = 1,
         seed:          int | None = None,
     ) -> np.ndarray:
         """
-        Génère un pattern de hi-hat via alpha-blending métrique/anti-métrique.
-
-        Args:
-            sync_level:    0 = métrique (on-beat), 1 = mixte, 2 = anti-métrique
-            density_level: 0 = sparse, 1 = medium, 2 = dense
-            seed:          graine locale (indépendante du RNG global)
-
-        Modèle :
-            alpha = sync_level / 2  → 0.0 (métrique pur) à 1.0 (anti-métrique pur)
-
-            struct      = poids_métrique × is_8th_note  (positions paires)
-            anti_metric = 1 - poids_métrique            (positions offbeat favorisées)
-            prob        = base_density × [(1-alpha)×struct + alpha×anti_metric]
-
-        Le boost ×1.1 sur les 8th notes a été retiré (AMÉLIORATION) car il
-        introduisait une asymétrie non justifiée avec le nouveau modèle
-        alpha-blend — les 8th notes sont déjà favorisées via struct quand alpha=0.
+        Pattern hi-hat stochastique cyclique.
+        Généré sur LOOP_BARS mesures, répété N_LOOPS fois.
         """
-        rng = np.random.default_rng(seed)
-        p   = self.empty()
+        rng       = np.random.default_rng(seed)
+        base_prob = config.HIHAT_DENSITY_PROBS.get(density_level, 0.50)
+        alpha     = config.alpha_from_sync_level(sync_level)
 
-        # Densité de base
-        density_map = {0: 0.30, 1: 0.50, 2: 0.70}
-        base_prob   = density_map.get(density_level, 0.50)
+        metric_weight_bar  = config.METRIC_PROFILE / config.METRIC_PROFILE.max()
+        metric_weight_loop = np.tile(metric_weight_bar, config.LOOP_BARS)
 
-        # Pattern 8th notes (positions paires = on-beat)
-        eighth_pattern       = np.zeros(self.steps_per_bar)
-        eighth_pattern[::2]  = 1.0   # 0, 2, 4, ..., 14
+        eighth_bar      = np.zeros(self.steps_per_bar)
+        eighth_bar[::2] = 1.0
+        eighth_loop     = np.tile(eighth_bar, config.LOOP_BARS)
 
-        # Profil métrique normalisé (max → 1.0)
-        metric_weight = config.METRIC_PROFILE / config.METRIC_PROFILE.max()
-
-        # Alpha : 0.0 = full métrique, 1.0 = full anti-métrique
-        alpha = sync_level / 2.0   # {0: 0.0, 1: 0.5, 2: 1.0}
-
-        # AMÉLIORATION : précalcul des vecteurs pour éviter la boucle Python.
-        # Les deux vecteurs sont définis sur une mesure et tuilés.
-        struct      = eighth_pattern * metric_weight          # (16,)
-        anti_metric = 1.0 - metric_weight                    # (16,)
-
-        # Probabilité par position dans la mesure
-        prob_bar = base_prob * ((1.0 - alpha) * struct + alpha * anti_metric)
-
-        # AMÉLIORATION : masque explicite des downbeats forts à alpha élevé.
-        # Sans ça, le downbeat (metric_weight=1.0 → anti_metric=0.0) a prob=0
-        # à alpha=1 ce qui est correct, mais le temps 3 (0.9 → anti=0.1)
-        # reste quasi absent. On laisse le modèle mathématique faire son travail
-        # — aucun masque supplémentaire nécessaire avec la normalisation /max().
-
-        prob_bar = np.clip(prob_bar, 0.0, 1.0)
-
-        # Tuilage sur n_steps
-        n_bars     = self.n_steps // self.steps_per_bar
-        prob_full  = np.tile(prob_bar, n_bars)
-
-        # Tirage stochastique vectorisé
-        draws     = rng.random(size=self.n_steps)
-        p         = (draws < prob_full).astype(np.float64)
-
-        return p
+        struct    = eighth_loop * metric_weight_loop
+        anti      = 1.0 - metric_weight_loop
+        prob_loop = base_prob * ((1.0 - alpha) * struct + alpha * anti)
+        prob_loop = np.clip(prob_loop, config.HIHAT_PROB_MIN, config.HIHAT_PROB_MAX)
+        
+        loop_pattern = (rng.random(self.loop_steps) < prob_loop).astype(np.float64)
+        pattern      = np.tile(loop_pattern, self.n_loops)
+        return pattern[: self.total_steps]
 
 
 # =========================================================
@@ -152,16 +117,25 @@ class MicroTiming:
     """
     Applique des déviations temporelles expressives (jitter) sur un pattern.
 
-    Trois composantes :
-        1. Swing     — retard systématique des offbeats (double-croche en grille 16)
-        2. Drift     — variation lente sinusoïdale (expressivité globale)
-        3. Noise     — bruit gaussien corrélé localement (irrégularité fine)
+    Composantes :
 
-    Les trois sont pondérées par `amount` (E dans le design) et `voice_weight`
-    (hihat > snare > kick, reflétant la hiérarchie perceptive).
+        Swing baseline — retard minimal des offbeats, toutes conditions.
+                         Amplitude : SWING_BASELINE × step_duration
+                         Indépendant de E. Humanise E=0.
+
+        Swing expressif — retard additionnel contrôlé par E.
+                          Amplitude : SWING_MAX_RATIO × amount × step_duration
+
+        Swing total = (SWING_BASELINE + SWING_MAX_RATIO × amount) × step_duration
+
+        Drift  — variation lente sinusoïdale (DRIFT_MAX_RATIO × amount × sd)
+        Noise  — bruit gaussien corrélé (NOISE_MAX_RATIO × amount × sd)
+
+    Le drift et le noise sont nuls à E=0 (amount=0).
+    Seul le swing baseline reste actif à E=0.
     """
 
-    def __init__(self, rng: np.random.Generator, step_duration: float):
+    def __init__(self, rng: np.random.Generator, step_duration: float) -> None:
         self.rng           = rng
         self.step_duration = step_duration
 
@@ -173,51 +147,46 @@ class MicroTiming:
     ) -> np.ndarray:
         """
         Args:
-            pattern:      pattern binaire (0/1), longueur n_steps
-            amount:       intensité globale du jitter (0 = quantisé, 1 = fort)
-            voice_weight: poids de la voix (kick=0.3, snare=0.5, hihat=1.0)
+            pattern      : pattern binaire (0/1), shape (n_steps,)
+            amount       : intensité du jitter = E × timing_scale ∈ [0, 1]
+            voice_weight : pondération perceptive de la voix ∈ [0, 1]
 
         Returns:
-            jitters: np.ndarray de décalages en secondes (0 si pas de hit)
+            jitters : décalages en secondes, 0 sur les positions sans hit
         """
-        if amount <= 0:
-            return np.zeros(len(pattern), dtype=np.float64)
-
         n    = len(pattern)
-        hits = np.where(pattern == 1)[0]
+        hits = np.where(pattern == 1.0)[0]
 
         if len(hits) == 0:
             return np.zeros(n, dtype=np.float64)
 
         sd = self.step_duration
 
-        # ── 1. Swing ─────────────────────────────────────
-        # Retard des positions offbeat (index % 4 == 2 dans une grille 16th)
-        # max = 12% du step_duration à amount=1
-        swing_strength = 0.12 * amount * sd
-        swing          = np.zeros(n)
-        swing[2::4]    = swing_strength   # AMÉLIORATION : vectorisé, pas de boucle
+        # ── Swing (baseline + expressif) ─────────────────────
+        # Actif même à amount=0 grâce au baseline.
+        # Appliqué sur les offbeats 16th (positions index % 4 == 2).
+        swing_total = (config.SWING_BASELINE + config.SWING_MAX_RATIO * amount) * sd
+        swing       = np.zeros(n)
+        swing[2::4] = swing_total
 
-        # ── 2. Drift ─────────────────────────────────────
-        # Sinusoïde lente (période = 2 × n_steps) avec phase aléatoire
-        # max = 10% du step_duration à amount=1
-        freq  = 1.0 / (n * 2)
-        phase = self.rng.uniform(0, 2 * np.pi)
-        drift = np.sin(2 * np.pi * freq * np.arange(n) + phase)
-        drift *= 0.10 * amount * sd
+        # ── Drift et Noise — actifs seulement si amount > 0 ──
+        if amount > 0.0:
+            # Drift sinusoïdal lent
+            phase = self.rng.uniform(0.0, 2.0 * np.pi)
+            drift = np.sin(2.0 * np.pi * np.arange(n) / (n * 2) + phase)
+            drift *= config.DRIFT_MAX_RATIO * amount * sd
 
-        # ── 3. Bruit corrélé ─────────────────────────────
-        # Gaussien lissé par un kernel triangulaire (évite les sauts brusques)
-        # σ = 10% du step_duration à amount=1
-        sigma = 0.10 * amount * sd
-        noise = self.rng.normal(0, sigma, size=n)
-        noise = np.convolve(noise, np.array([0.25, 0.5, 0.25]), mode="same")
+            # Bruit gaussien corrélé
+            sigma = config.NOISE_MAX_RATIO * amount * sd
+            noise = self.rng.normal(0.0, sigma, size=n)
+            noise = np.convolve(noise, np.array([0.25, 0.5, 0.25]), mode="same")
+        else:
+            drift = np.zeros(n)
+            noise = np.zeros(n)
 
-        # ── Combinaison ──────────────────────────────────
-        total_shift = swing + drift + noise
-
-        jitters        = np.zeros(n, dtype=np.float64)
-        jitters[hits]  = total_shift[hits] * voice_weight
+        total_shift   = swing + drift + noise
+        jitters       = np.zeros(n, dtype=np.float64)
+        jitters[hits] = total_shift[hits] * voice_weight
 
         return jitters
 
@@ -227,21 +196,21 @@ class MicroTiming:
 # =========================================================
 
 class Stimulus:
-    """Assemble un stimulus complet (patterns + jitters) depuis une config."""
+    """
+    Assemble un stimulus complet.
+    P (push/pull inter-voix) appliqué comme décalage uniforme sur le hihat.
+    """
 
-    def __init__(self, voices: Voices, micro: MicroTiming):
+    def __init__(self, voices: Voices, micro: MicroTiming) -> None:
         self.voices = voices
         self.micro  = micro
 
     def build(self, cfg: dict, seed: int) -> dict:
-        """
-        Args:
-            cfg:  dict avec clés S_mv, D_mv, E (+ phase, repeat)
-            seed: graine pour reproductibilité du hi-hat
+        E       = cfg["E"]
+        P_level = cfg.get("P", 0)
 
-        Returns:
-            dict avec kick, snare, hihat, *_jitter, config
-        """
+        hihat_push_s = config.push_from_p_level(P_level) * self.micro.step_duration
+
         kick  = self.voices.kick()
         snare = self.voices.snare()
         hihat = self.voices.hihat(
@@ -250,10 +219,25 @@ class Stimulus:
             seed=seed,
         )
 
-        # Hiérarchie perceptive : hihat le plus sensible au micro-timing
-        kick_j  = self.micro.apply(kick,  amount=cfg["E"] * 0.20, voice_weight=0.3)
-        snare_j = self.micro.apply(snare, amount=cfg["E"] * 0.30, voice_weight=0.5)
-        hihat_j = self.micro.apply(hihat, amount=cfg["E"] * 1.00, voice_weight=1.0)
+        kick_j  = self.micro.apply(
+            kick,
+            amount=E * config.KICK_TIMING_SCALE,
+            voice_weight=config.KICK_VOICE_WEIGHT,
+        )
+        snare_j = self.micro.apply(
+            snare,
+            amount=E * config.SNARE_TIMING_SCALE,
+            voice_weight=config.SNARE_VOICE_WEIGHT,
+        )
+        hihat_j = self.micro.apply(
+            hihat,
+            amount=E * config.HIHAT_TIMING_SCALE,
+            voice_weight=config.HIHAT_VOICE_WEIGHT,
+        )
+
+        # Push/pull : décalage uniforme sur tous les hits du hihat
+        hihat_hits      = hihat == 1.0
+        hihat_j[hihat_hits] += hihat_push_s
 
         return {
             "kick":         kick,
@@ -262,6 +246,7 @@ class Stimulus:
             "kick_jitter":  kick_j,
             "snare_jitter": snare_j,
             "hihat_jitter": hihat_j,
+            "hihat_push":   hihat_push_s,
             "config":       cfg,
         }
 
@@ -271,79 +256,46 @@ class Stimulus:
 # =========================================================
 
 class Metrics:
-    """
-    Métriques acoustiques calculées sur un stimulus assemblé.
-
-    D       — densité globale pondérée (hihat dominant perceptivement)
-    I       — variance inter-voix (équilibre kick/snare/hihat)
-    V       — variance du micro-timing (dispersion des jitters)
-    S_real  — index de syncopation (implémentation proche de Keith 2011)
-    E_real  — énergie moyenne du micro-timing (amplitude absolue)
-    """
+    def __init__(self, step_duration: float) -> None:
+        self.step_duration = step_duration
 
     def global_density(self, stim: dict) -> float:
-        """Densité globale pondérée perceptivement (hihat = 60%)."""
         return (
-            0.20 * float(np.mean(stim["kick"]))  +
-            0.20 * float(np.mean(stim["snare"])) +
-            0.60 * float(np.mean(stim["hihat"]))
+            config.KICK_DENSITY_WEIGHT  * float(np.mean(stim["kick"]))  +
+            config.SNARE_DENSITY_WEIGHT * float(np.mean(stim["snare"])) +
+            config.HIHAT_DENSITY_WEIGHT * float(np.mean(stim["hihat"]))
         )
 
     def micro_V(self, stim: dict) -> float:
-        """Variance des jitters sur toutes les voix (mesure de dispersion)."""
-        vals = []
-        for v in ["kick", "snare", "hihat"]:
-            jitter  = stim[f"{v}_jitter"]
-            pattern = stim[v]
-            vals.extend(jitter[pattern == 1].tolist())
+        vals: list[float] = []
+        for v in ("kick", "snare", "hihat"):
+            mask = stim[v] == 1.0
+            vals.extend(stim[f"{v}_jitter"][mask].tolist())
         return float(np.var(vals)) if vals else 0.0
 
     def syncopation_index(self, pattern: np.ndarray) -> float:
-        """
-        Index de syncopation inspiré de Keith (2011).
-
-        Un hit est syncopé si :
-          - il tombe sur une position de faible poids métrique
-          - ET la prochaine position de poids supérieur n'est pas frappée
-
-        Score = somme des (poids_attendu - poids_réel) pour chaque hit syncopé,
-                normalisée par le nombre total de hits.
-
-        Retourne 0.0 si aucun hit.
-        """
-        n = len(pattern)
-
-        # Profil métrique tuilé sur n_steps
-        metric_profile = np.tile(
+        n      = len(pattern)
+        metric = np.tile(
             config.METRIC_PROFILE,
             int(np.ceil(n / config.STEPS_PER_BAR))
         )[:n]
-
-        hits = np.where(pattern == 1)[0]
+        hits = np.where(pattern == 1.0)[0]
         if len(hits) == 0:
             return 0.0
-
-        sync  = 0.0
-
+        threshold  = config.SYNCOPATION_STRONG_THRESHOLD
+        sync_score = 0.0
         for i in hits:
-            current_weight = metric_profile[i]
-
-            # Pas syncopé si sur position forte (seuil 0.5)
-            if current_weight > 0.5:
+            w_i = metric[i]
+            if w_i > threshold:
                 continue
-
-            # Cherche la prochaine position de poids supérieur
             for j in range(i - 1, -1, -1):
-                if metric_profile[j] > current_weight :
-                    if pattern[j] == 0:
-                        sync += (metric_profile[j] - current_weight)
-
+                if metric[j] > w_i:
+                    if pattern[j] == 0.0:
+                        sync_score += metric[j] - w_i
                     break
-
-        return sync / len(hits)
+        return sync_score / len(hits)
 
     def inter_voice_variance(self, stim: dict) -> float:
-        """Variance des densités entre voix (équilibre rythmique)."""
         densities = [
             float(np.mean(stim["kick"])),
             float(np.mean(stim["snare"])),
@@ -352,13 +304,40 @@ class Metrics:
         return float(np.var(densities))
 
     def micro_E(self, stim: dict) -> float:
-        """Énergie moyenne du micro-timing (amplitude absolue des jitters)."""
-        vals = []
-        for v in ["kick", "snare", "hihat"]:
-            jitter  = stim[f"{v}_jitter"]
-            pattern = stim[v]
-            vals.extend(np.abs(jitter[pattern == 1]).tolist())
+        vals: list[float] = []
+        for v in ("kick", "snare", "hihat"):
+            mask = stim[v] == 1.0
+            vals.extend(np.abs(stim[f"{v}_jitter"][mask]).tolist())
         return float(np.mean(vals)) if vals else 0.0
+
+    def inter_voice_push(self, stim: dict) -> float:
+        """P_real — désalignement inter-voix mesuré, signé, normalisé."""
+        hihat_hits  = np.where(stim["hihat"] == 1.0)[0]
+        anchor_hits = np.where(
+            (stim["kick"] == 1.0) | (stim["snare"] == 1.0)
+        )[0]
+        if len(hihat_hits) == 0 or len(anchor_hits) == 0:
+            return 0.0
+
+        anchor_j = np.zeros(len(stim["kick"]), dtype=np.float64)
+        for v, key in [("kick", "kick_jitter"), ("snare", "snare_jitter")]:
+            mask = stim[v] == 1.0
+            anchor_j[mask] = stim[key][mask]
+
+        window = 2
+        diffs: list[float] = []
+        for hi in hihat_hits:
+            distances = np.abs(anchor_hits - hi)
+            if distances.min() <= window:
+                closest = anchor_hits[distances.argmin()]
+                diffs.append(
+                    float(stim["hihat_jitter"][hi])
+                    - float(anchor_j[closest])
+                )
+        if not diffs:
+            return 0.0
+        sd = self.step_duration
+        return float(np.mean(diffs) / sd) if sd > 0 else 0.0
 
 
 # =========================================================
@@ -366,50 +345,39 @@ class Metrics:
 # =========================================================
 
 def build_design(n_repeats: int | None = None) -> list[dict]:
-    """
-    Construit le design factoriel en 3 phases.
 
-    Phase 1 : manipulation de S_mv seul (D_mv=1, E=0) → effet structure
-    Phase 2 : manipulation de E seul (S_mv=1, D_mv=1)  → effet micro-timing
-    Phase 3 : factoriel complet S × D × E              → interactions
+    if n_repeats is not None:
+        # override CLI (--repeats N) → toutes les phases au même niveau
+        r1 = r2 = r3 = n_repeats
+    else:
+        r1 = config.REPEATS_P1
+        r2 = config.REPEATS_P2
+        r3 = config.REPEATS_P3
 
-    Chaque condition est répétée `repeats` fois (counterbalancing).
-    """
-    repeats = config.REPEATS if n_repeats is None else n_repeats
-
-    base = []
-
-    # Phase 1 — syncopation seule
-    base += [
-        {"phase": 1, "S_mv": s, "D_mv": 1, "E": 0.0}
+    phase1 = [
+        {"phase": 1, "S_mv": s, "D_mv": 1, "E": 0.0, "P": 0}
         for s in config.S_LEVELS
     ]
-
-    # Phase 2 — micro-timing seul
-    base += [
-        {"phase": 2, "S_mv": 1, "D_mv": 1, "E": e}
-        for e in config.E_LEVELS
-        if e > 0   # AMÉLIORATION : E=0 est déjà couvert en phase 1 (évite doublon)
+    phase2 = [
+        {"phase": 2, "S_mv": 1, "D_mv": 1, "E": e, "P": p}
+        for e, p in itertools.product(config.E_LEVELS, config.P_LEVELS)
+        if not (e == 0.0 and p == 0)
     ]
-
-    # Phase 3 — factoriel complet
-    base += [
-        {"phase": 3, "S_mv": s, "D_mv": d, "E": e}
-        for s, d, e in itertools.product(
+    phase3 = [
+        {"phase": 3, "S_mv": s, "D_mv": d, "E": e, "P": p}
+        for s, d, e, p in itertools.product(
             config.S_LEVELS,
             config.D_LEVELS,
             config.E_LEVELS,
+            config.P_LEVELS,
         )
     ]
 
-    # Expansion avec répétitions
-    expanded = [
-        {**condition, "repeat": r}
-        for condition in base
-        for r in range(repeats)
-    ]
-
-    return expanded
+    return (
+        [{**c, "repeat": r} for c in phase1 for r in range(r1)] +
+        [{**c, "repeat": r} for c in phase2 for r in range(r2)] +
+        [{**c, "repeat": r} for c in phase3 for r in range(r3)]
+    )
 
 
 # =========================================================
@@ -417,72 +385,48 @@ def build_design(n_repeats: int | None = None) -> list[dict]:
 # =========================================================
 
 def run_experiment(
-    seed: int | None = None,
+    seed:      int | None = None,
     n_repeats: int | None = None,
 ) -> tuple[pd.DataFrame, dict]:
-    """
-    Lance l'expérience complète : génère tous les stimuli du design.
-
-    Args:
-        seed:      graine maître (défaut : config.SEED)
-        n_repeats: nombre de répétitions par condition (défaut : config.REPEATS)
-
-    Returns:
-        df:    DataFrame avec métriques + patterns pour chaque stimulus
-        cache: dict {id: stim_dict} pour export MIDI
-    """
     seed = config.SEED if seed is None else seed
     rng  = np.random.default_rng(seed)
 
     grid    = Grid()
     voices  = Voices(grid, seed=seed)
     micro   = MicroTiming(rng, grid.step_duration)
-
-    stim_builder = Stimulus(voices, micro)
-    metrics      = Metrics()
+    builder = Stimulus(voices, micro)
+    metrics = Metrics(grid.step_duration)
 
     design = build_design(n_repeats=n_repeats)
+    order  = rng.permutation(len(design))
+    design = [design[i] for i in order]
 
-    # AMÉLIORATION : shuffle reproductible via le RNG maître
-    # (np.random.shuffle ne respecte pas la graine fixée par default_rng)
-    indices = rng.permutation(len(design))
-    design  = [design[i] for i in indices]
-
-    rows  = {}
-    cache = {}
+    rows:  dict[int, dict] = {}
+    cache: dict[int, dict] = {}
 
     for i, cfg in enumerate(design):
-        # Graine dérivée déterministe : seed + i (reproductible quel que soit i)
-        stim = stim_builder.build(cfg, seed=seed + i)
+        stim     = builder.build(cfg, seed=seed + i)
         cache[i] = stim
 
         rows[i] = {
-            # ── Identifiants ──────────────────────────
-            "id":     i,
-            "phase":  cfg["phase"],
-            "repeat": cfg["repeat"],
-
-            # ── Variables manipulées ──────────────────
-            "S_mv":  cfg["S_mv"],
-            "D_mv":  cfg["D_mv"],
-            "E":     cfg["E"],
-
-            # ── Métriques réalisées ───────────────────
-            "D":      metrics.global_density(stim),
-            "I":      metrics.inter_voice_variance(stim),
-            "V":      metrics.micro_V(stim),
-            "S_real": metrics.syncopation_index(stim["hihat"]),
-            "E_real": metrics.micro_E(stim),
-
-            # ── Contexte ─────────────────────────────
-            "BPM":   grid.bpm,
-
-            # ── Patterns bruts (pour export MIDI) ────
-            "kick":  stim["kick"].tolist(),
-            "snare": stim["snare"].tolist(),
-            "hihat": stim["hihat"].tolist(),
+            "id":      i,
+            "stim_id": f"stim_{i:04d}",
+            "phase":   cfg["phase"],
+            "repeat":  cfg["repeat"],
+            "S_mv":    cfg["S_mv"],
+            "D_mv":    cfg["D_mv"],
+            "E":       cfg["E"],
+            "P":       cfg.get("P", 0),
+            "D":       metrics.global_density(stim),
+            "I":       metrics.inter_voice_variance(stim),
+            "V":       metrics.micro_V(stim),
+            "S_real":  metrics.syncopation_index(stim["hihat"]),
+            "E_real":  metrics.micro_E(stim),
+            "P_real":  metrics.inter_voice_push(stim),
+            "BPM":     grid.bpm,
+            "kick":    stim["kick"].tolist(),
+            "snare":   stim["snare"].tolist(),
+            "hihat":   stim["hihat"].tolist(),
         }
 
-    df = pd.DataFrame.from_dict(rows, orient="index")
-
-    return df, cache
+    return pd.DataFrame.from_dict(rows, orient="index"), cache

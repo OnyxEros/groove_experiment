@@ -1,135 +1,168 @@
-# =========================================================
+# ===========================================================
 #  GROOVE EXPERIMENT SYSTEM — Makefile
-#  Usage: make help
-# =========================================================
+#
+#  Usage    : make help
+#  Requires : GNU Make ≥ 3.81, Python ≥ 3.11
+# ===========================================================
 
-PYTHON      := python
-SEED        := 42
-REPEATS     := 8
-MODE        := full
-STEPS       := embeddings projection clustering metrics_view viz export
-FEATURE_SET := all
+# ── Tooling ─────────────────────────────────────────────────
+PYTHON      ?= python
+PIP         ?= pip
 
+# ── Experiment defaults (overrideable on CLI) ───────────────
+SEED        ?= 42
+REPEATS     ?= 
+MODE        ?= full
+STEPS       ?= embeddings projection clustering metrics_view viz export
+FEATURE_SET ?= all
+
+# ── Flags (set to 1 to enable) ──────────────────────────────
+NO_CHECK_DB ?= 0      # 1 → skip Supabase check in regression
+SKIP_AUDIO  ?= 0      # 1 → skip WAV/MP3 rendering in generate
+
+# ── Internal helpers ────────────────────────────────────────
+_NO_DB_FLAG  = $(if $(filter 1,$(NO_CHECK_DB)),--no-check-db,)
+_AUDIO_FLAG  = $(if $(filter 1,$(SKIP_AUDIO)),--skip-audio,)
+
+# ── Colours ─────────────────────────────────────────────────
 BOLD  := \033[1m
 GREEN := \033[32m
 CYAN  := \033[36m
+YELLOW:= \033[33m
 DIM   := \033[2m
 RESET := \033[0m
 
-# =========================================================
-# HELP  (default target)
-# =========================================================
-
 .DEFAULT_GOAL := help
 
+# ===========================================================
+# HELP
+# ===========================================================
+
+.PHONY: help
 help:
-	@echo ""
-	@echo "$(BOLD)🎧  GROOVE EXPERIMENT SYSTEM$(RESET)"
-	@echo "$(DIM)────────────────────────────────────────────$(RESET)"
-	@echo ""
-	@echo "$(BOLD)$(CYAN)📦  DATA PIPELINE$(RESET)"
-	@echo "  make generate             full generation (MIDI + audio + dataset)"
-	@echo "  make fast                 generation without audio rendering"
-	@echo "  make preview              quick stimulus preview"
-	@echo ""
-	@echo "$(BOLD)$(CYAN)🧠  ANALYSIS$(RESET)"
-	@echo "  make analysis             full analysis pipeline"
-	@echo "  make analysis-audio       perceptual-focused pipeline"
-	@echo "  make analysis-groove      groove-focused pipeline"
-	@echo "  make analysis-custom      custom steps (STEPS='...')"
-	@echo ""
-	@echo "$(BOLD)$(CYAN)📊  MODELLING$(RESET)"
-	@echo "  make regression           train regression (FEATURE_SET=design|acoustic|all)"
-	@echo "  make regression-design    design params only (S_mv, D_mv, E)"
-	@echo "  make regression-acoustic  acoustic metrics only (D, I, V, S_real, E_real)"
-	@echo "  make perception           perceptual alignment"
-	@echo "  make refresh              re-fetch Supabase responses (ignore local cache)"
-	@echo ""
-	@echo "$(BOLD)$(CYAN)☁️   INFRA$(RESET)"
-	@echo "  make sync                 sync Supabase → data/responses.csv"
-	@echo "  make serve                start FastAPI backend"
-	@echo "  make ui                   open Streamlit explorer"
-	@echo ""
-	@echo "$(BOLD)$(CYAN)🚀  FULL PIPELINES$(RESET)"
-	@echo "  make all                  generate + analysis + sync + perception"
-	@echo "  make paper                analysis + perception + regression (for thesis)"
-	@echo "  make repro                clean + all  (fully reproducible)"
-	@echo ""
-	@echo "$(BOLD)$(CYAN)🧹  CLEAN$(RESET)"
-	@echo "  make clean                full clean (all targets)"
-	@echo "  make clean-outputs        MIDI / WAV / MP3 / PREVIEW"
-	@echo "  make clean-analysis       analysis outputs"
-	@echo "  make clean-metadata       metadata CSV"
-	@echo "  make clean-responses      local Supabase cache (responses.csv)"
-	@echo "  make clean-cache          __pycache__"
-	@echo ""
-	@echo "$(BOLD)$(CYAN)⚙️   UTILS$(RESET)"
-	@echo "  make status               system status + dependency check"
-	@echo "  make validate             dry-run: show what would execute"
-	@echo "  make setup                install dependencies"
-	@echo "  make dev                  start backend + UI concurrently"
-	@echo ""
-	@echo "$(DIM)Config: SEED=$(SEED)  REPEATS=$(REPEATS)  MODE=$(MODE)  FEATURE_SET=$(FEATURE_SET)$(RESET)"
-	@echo ""
+	@printf "\n$(BOLD)🎧  GROOVE EXPERIMENT SYSTEM$(RESET)\n"
+	@printf "$(DIM)──────────────────────────────────────────────$(RESET)\n\n"
 
+	@printf "$(BOLD)$(CYAN)📦  DATA PIPELINE$(RESET)\n"
+	@printf "  %-28s %s\n" "make generate"        "Full generation (MIDI + audio + metadata.csv)"
+	@printf "  %-28s %s\n" "make fast"             "Generation without audio  (SKIP_AUDIO=1)"
+	@printf "  %-28s %s\n" "make preview"          "3 preview stimuli (baseline / swing / syncopated)"
+	@printf "\n"
 
-# =========================================================
-# AUTO __pycache__ WIPE
-# =========================================================
+	@printf "$(BOLD)$(CYAN)🧠  ANALYSIS$(RESET)\n"
+	@printf "  %-28s %s\n" "make analysis"         "Full analysis pipeline  (MODE=full)"
+	@printf "  %-28s %s\n" "make analysis-audio"   "Perceptual-focused pipeline"
+	@printf "  %-28s %s\n" "make analysis-groove"  "Groove-focused pipeline"
+	@printf "  %-28s %s\n" "make analysis-custom"  "Custom steps  (STEPS='...')"
+	@printf "\n"
 
-_wipe-cache:
+	@printf "$(BOLD)$(CYAN)📊  MODELLING$(RESET)\n"
+	@printf "  %-28s %s\n" "make regression"        "One feature set  (FEATURE_SET=design|acoustic|all)"
+	@printf "  %-28s %s\n" "make regression-design"  "Design params only  (S_mv, D_mv, E)"
+	@printf "  %-28s %s\n" "make regression-acoustic" "Acoustic metrics only  (D, I, V, S_real, E_real)"
+	@printf "  %-28s %s\n" "make regression-all"    "All 3 feature sets — thesis mode"
+	@printf "  %-28s %s\n" "make perception"         "Perceptual alignment  (latent → ratings)"
+	@printf "  %-28s %s\n" "make perception-space"   "Geometric analysis of groove in UMAP space"
+	@printf "  %-28s %s\n" "make refresh"            "Re-fetch Supabase + rerun regression + perception"
+	@printf "  %-28s %s\n" "make regression-fast"    "Regression without Supabase check  (offline)"
+	@printf "\n"
+
+	@printf "$(BOLD)$(CYAN)☁️   INFRA$(RESET)\n"
+	@printf "  %-28s %s\n" "make sync"    "Fetch Supabase → data/responses.csv  (read-only)"
+	@printf "  %-28s %s\n" "make serve"   "Start FastAPI backend"
+	@printf "  %-28s %s\n" "make ui"      "Open Streamlit explorer"
+	@printf "\n"
+
+	@printf "$(BOLD)$(CYAN)🚀  FULL PIPELINES$(RESET)\n"
+	@printf "  %-28s %s\n" "make all"     "generate + analysis + sync + regression-all + perception"
+	@printf "  %-28s %s\n" "make paper"   "sync + regression-all + perception + perception-space"
+	@printf "  %-28s %s\n" "make repro"   "clean + all  (fully reproducible from scratch)"
+	@printf "\n"
+
+	@printf "$(BOLD)$(CYAN)🧹  CLEAN$(RESET)\n"
+	@printf "  %-28s %s\n" "make clean"            "Full clean  (all targets)"
+	@printf "  %-28s %s\n" "make clean-outputs"    "MIDI / WAV / MP3 / PREVIEW"
+	@printf "  %-28s %s\n" "make clean-analysis"   "data/analysis/"
+	@printf "  %-28s %s\n" "make clean-metadata"   "data/metadata.csv"
+	@printf "  %-28s %s\n" "make clean-responses"  "data/responses.csv  (local Supabase cache)"
+	@printf "  %-28s %s\n" "make clean-cache"      "__pycache__ + *.pyc"
+	@printf "\n"
+
+	@printf "$(BOLD)$(CYAN)⚙️   UTILS$(RESET)\n"
+	@printf "  %-28s %s\n" "make status"   "System status  (dirs, deps, cache)"
+	@printf "  %-28s %s\n" "make doctor"   "Supabase + env diagnostic"
+	@printf "  %-28s %s\n" "make validate" "Dry-run all major commands"
+	@printf "  %-28s %s\n" "make setup"    "Install Python dependencies"
+	@printf "  %-28s %s\n" "make dev"      "Start backend + Streamlit concurrently"
+	@printf "\n"
+
+	@printf "$(DIM)Config: SEED=$(SEED)  REPEATS=$(REPEATS)  MODE=$(MODE)  FEATURE_SET=$(FEATURE_SET)  NO_CHECK_DB=$(NO_CHECK_DB)  SKIP_AUDIO=$(SKIP_AUDIO)$(RESET)\n\n"
+
+# ===========================================================
+# INTERNAL: AUTO PYCACHE WIPE
+# ===========================================================
+
+.PHONY: _wipe
+_wipe:
 	@find . -type d -name __pycache__ -not -path './.git/*' \
-	  | xargs rm -rf 2>/dev/null || true
-	@find . -name '*.pyc' -not -path './.git/*' -delete 2>/dev/null || true
+	    | xargs rm -rf 2>/dev/null || true
+	@find . -name '*.pyc' -not -path './.git/*' \
+	    -delete 2>/dev/null || true
 
-
-# =========================================================
+# ===========================================================
 # SETUP
-# =========================================================
+# ===========================================================
 
+.PHONY: setup install
 setup:
 	$(PYTHON) setup.py
 
 install:
-	pip install -r requirements.txt
+	$(PIP) install -r requirements.txt
 
+# ===========================================================
+# STATUS / DIAGNOSTIC
+# ===========================================================
 
-# =========================================================
-# STATUS & VALIDATION
-# =========================================================
-
+.PHONY: status doctor validate
 status:
 	$(PYTHON) cli.py --status
 
+doctor:
+	$(PYTHON) cli.py --doctor
+
 validate:
-	@echo "$(BOLD)$(CYAN)🔍  Dry-run validation$(RESET)"
-	$(PYTHON) cli.py --generate --seed $(SEED) --repeats $(REPEATS) --dry-run
+	@printf "$(BOLD)$(CYAN)🔍  Dry-run validation$(RESET)\n"
+	$(PYTHON) cli.py --generate --seed $(SEED) --repeats $(REPEATS) $(_AUDIO_FLAG) --dry-run
 	$(PYTHON) cli.py --analysis --analysis-mode $(MODE) --dry-run
-	$(PYTHON) cli.py --regression --feature-set $(FEATURE_SET) --dry-run
+	$(PYTHON) cli.py --sync --dry-run
+	$(PYTHON) cli.py --regression --feature-set $(FEATURE_SET) $(_NO_DB_FLAG) --dry-run
+	$(PYTHON) cli.py --regression-all $(_NO_DB_FLAG) --dry-run
 	$(PYTHON) cli.py --perception --dry-run
+	$(PYTHON) cli.py --perception-space --dry-run
 
-
-# =========================================================
+# ===========================================================
 # DATA PIPELINE
-# =========================================================
+# ===========================================================
 
-generate: _wipe-cache
-	$(PYTHON) cli.py --generate --seed $(SEED) --repeats $(REPEATS)
-	@$(MAKE) --no-print-directory _wipe-cache
+.PHONY: generate fast preview
+generate: _wipe
+	$(PYTHON) cli.py --generate --seed $(SEED) $(if $(REPEATS),--repeats $(REPEATS),)
+	@$(MAKE) --no-print-directory _wipe
 
-fast: _wipe-cache
+fast: _wipe
 	$(PYTHON) cli.py --generate --seed $(SEED) --repeats $(REPEATS) --skip-audio
-	@$(MAKE) --no-print-directory _wipe-cache
+	@$(MAKE) --no-print-directory _wipe
 
-preview: _wipe-cache
+preview: _wipe
 	$(PYTHON) cli.py --preview --seed $(SEED)
-	@$(MAKE) --no-print-directory _wipe-cache
+	@$(MAKE) --no-print-directory _wipe
 
-
-# =========================================================
+# ===========================================================
 # CLEAN
-# =========================================================
+# ===========================================================
 
+.PHONY: clean clean-outputs clean-analysis clean-metadata clean-responses clean-cache
 clean:
 	$(PYTHON) cli.py --clean all
 
@@ -148,62 +181,79 @@ clean-responses:
 clean-cache:
 	$(PYTHON) cli.py --clean cache
 
-
-# =========================================================
+# ===========================================================
 # ANALYSIS ENGINE
-# =========================================================
+# ===========================================================
 
-analysis: _wipe-cache
+.PHONY: analysis analysis-audio analysis-groove analysis-custom
+analysis: _wipe
 	$(PYTHON) cli.py --analysis --analysis-mode full
-	@$(MAKE) --no-print-directory _wipe-cache
+	@$(MAKE) --no-print-directory _wipe
 
-analysis-audio: _wipe-cache
+analysis-audio: _wipe
 	$(PYTHON) cli.py --analysis --analysis-mode audio
-	@$(MAKE) --no-print-directory _wipe-cache
+	@$(MAKE) --no-print-directory _wipe
 
-analysis-groove: _wipe-cache
+analysis-groove: _wipe
 	$(PYTHON) cli.py --analysis --analysis-mode groove
-	@$(MAKE) --no-print-directory _wipe-cache
+	@$(MAKE) --no-print-directory _wipe
 
-analysis-custom: _wipe-cache
+analysis-custom: _wipe
 	$(PYTHON) cli.py --analysis --steps $(STEPS)
-	@$(MAKE) --no-print-directory _wipe-cache
+	@$(MAKE) --no-print-directory _wipe
 
-
-# =========================================================
+# ===========================================================
 # MODELLING
-# =========================================================
+# ===========================================================
 
-regression: _wipe-cache
-	$(PYTHON) cli.py --regression --feature-set $(FEATURE_SET)
-	@$(MAKE) --no-print-directory _wipe-cache
+.PHONY: regression regression-design regression-acoustic regression-all
+.PHONY: regression-fast perception perception-space refresh
 
-# Raccourcis pour comparer les feature sets (utile pour la thèse)
-regression-design: _wipe-cache
-	$(PYTHON) cli.py --regression --feature-set design
-	@$(MAKE) --no-print-directory _wipe-cache
+# Un seul feature set (configurable)
+regression: _wipe
+	$(PYTHON) cli.py --regression --feature-set $(FEATURE_SET) $(_NO_DB_FLAG)
+	@$(MAKE) --no-print-directory _wipe
 
-regression-acoustic: _wipe-cache
-	$(PYTHON) cli.py --regression --feature-set acoustic
-	@$(MAKE) --no-print-directory _wipe-cache
+# Raccourcis feature sets
+regression-design: _wipe
+	$(PYTHON) cli.py --regression --feature-set design $(_NO_DB_FLAG)
+	@$(MAKE) --no-print-directory _wipe
 
-perception: _wipe-cache
+regression-acoustic: _wipe
+	$(PYTHON) cli.py --regression --feature-set acoustic $(_NO_DB_FLAG)
+	@$(MAKE) --no-print-directory _wipe
+
+# Tous les feature sets d'un coup (mode mémoire)
+regression-all: _wipe
+	$(PYTHON) cli.py --regression-all $(_NO_DB_FLAG)
+	@$(MAKE) --no-print-directory _wipe
+
+# Offline (skip Supabase check)
+regression-fast: _wipe
+	$(PYTHON) cli.py --regression --feature-set $(FEATURE_SET) --no-check-db
+	@$(MAKE) --no-print-directory _wipe
+
+perception: _wipe
 	$(PYTHON) cli.py --perception
-	@$(MAKE) --no-print-directory _wipe-cache
+	@$(MAKE) --no-print-directory _wipe
 
-# Re-fetch Supabase + relance régression + perception avec données fraîches
-refresh: _wipe-cache
-	$(PYTHON) cli.py --regression --perception --refresh
-	@$(MAKE) --no-print-directory _wipe-cache
+perception-space: _wipe
+	$(PYTHON) cli.py --perception-space
+	@$(MAKE) --no-print-directory _wipe
 
+# Re-fetch Supabase + modèles complets
+refresh: _wipe
+	$(PYTHON) cli.py --regression-all --perception --refresh $(_NO_DB_FLAG)
+	@$(MAKE) --no-print-directory _wipe
 
-# =========================================================
+# ===========================================================
 # INFRA
-# =========================================================
+# ===========================================================
 
-sync: _wipe-cache
+.PHONY: sync serve ui
+sync: _wipe
 	$(PYTHON) cli.py --sync
-	@$(MAKE) --no-print-directory _wipe-cache
+	@$(MAKE) --no-print-directory _wipe
 
 serve:
 	$(PYTHON) run_server.py
@@ -211,54 +261,38 @@ serve:
 ui:
 	streamlit run analysis/explorer/app.py
 
-
-# =========================================================
+# ===========================================================
 # FULL PIPELINES
-# =========================================================
+# ===========================================================
+
+.PHONY: all paper repro
 
 # Pipeline complet (génération → analyse → sync → modèles)
-all: generate analysis sync perception regression
-	@echo ""
-	@echo "$(BOLD)$(GREEN)✔  Full pipeline complete$(RESET)"
+all: generate analysis sync regression-all perception
+	@printf "\n$(BOLD)$(GREEN)✔  Full pipeline complete$(RESET)\n\n"
 
-# Pipeline thèse : données fraîches Supabase → analyse → modèles comparatifs
-paper: _wipe-cache
-	$(PYTHON) cli.py --regression --feature-set design --refresh
-	$(PYTHON) cli.py --regression --feature-set acoustic
-	$(PYTHON) cli.py --regression --feature-set all
-	$(PYTHON) cli.py --perception
-	@$(MAKE) --no-print-directory _wipe-cache
-	@echo ""
-	@echo "$(BOLD)$(GREEN)✔  Paper pipeline complete$(RESET)"
+# Pipeline mémoire : données fraîches → tous les modèles → figures
+# Lance regression-all avec --refresh (1 seul fetch Supabase)
+paper: _wipe
+	@printf "$(BOLD)$(CYAN)📄  Paper pipeline$(RESET)\n"
+	$(PYTHON) cli.py --sync
+	$(PYTHON) cli.py --regression-all --refresh --perception --perception-space $(_NO_DB_FLAG)
+	@$(MAKE) --no-print-directory _wipe
+	@printf "\n$(BOLD)$(GREEN)✔  Paper pipeline complete$(RESET)\n\n"
 
 # Run totalement reproductible depuis zéro
 repro: clean all
-	@echo ""
-	@echo "$(BOLD)$(GREEN)✔  Reproducible run complete$(RESET)"
+	@printf "\n$(BOLD)$(GREEN)✔  Reproducible run complete$(RESET)\n\n"
 
-
-# =========================================================
+# ===========================================================
 # DEV
-# =========================================================
+# ===========================================================
 
+.PHONY: dev
 dev:
-	@echo "$(BOLD)$(CYAN)🚀  Starting backend + Streamlit UI$(RESET)"
-	@$(PYTHON) run_server.py & \
-	  sleep 2 && \
-	  streamlit run analysis/explorer/app.py
-
-
-# =========================================================
-# PHONY
-# =========================================================
-
-.PHONY: \
-  help setup install \
-  status validate \
-  generate fast preview \
-  clean clean-outputs clean-analysis clean-metadata clean-responses clean-cache _wipe-cache \
-  analysis analysis-audio analysis-groove analysis-custom \
-  regression regression-design regression-acoustic perception refresh \
-  sync serve ui \
-  all paper repro \
-  dev
+	@printf "$(BOLD)$(CYAN)🚀  Starting backend + Streamlit$(RESET)\n"
+	@# Utilise trap pour killer les deux processes ensemble (Ctrl+C)
+	@$(PYTHON) run_server.py & SERVER_PID=$$!; \
+	 sleep 1 && streamlit run analysis/explorer/app.py & UI_PID=$$!; \
+	 trap "kill $$SERVER_PID $$UI_PID 2>/dev/null" INT TERM; \
+	 wait $$SERVER_PID $$UI_PID
