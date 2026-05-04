@@ -1,5 +1,5 @@
 /* ============================================================
-   app.js — Groove Study
+   app.js — Groove Study v2
    ============================================================ */
 
 'use strict';
@@ -11,166 +11,219 @@ let idx            = 0;
 let start_time     = 0;
 let canRespond     = false;
 let is_sending     = false;
-let currentAudio   = null;      // HTMLAudioElement actif
+let currentAudio   = null;
 
 /* ── Init ───────────────────────────────────────────────── */
 async function init() {
     try {
-        const p  = await fetch('/new_participant').then(r => r.json());
+        const p = await fetch('/new_participant').then(r => r.json());
         participant_id = p.participant_id;
 
         stimuli = await fetch('/stimuli?n=20').then(r => r.json());
         shuffle(stimuli);
 
-        // Préchargement discret du premier audio
         if (stimuli.length > 0) preloadOne(stimuli[0]);
 
     } catch (e) {
         console.error('Init error:', e);
-        showError('Erreur de chargement. Recharge la page.');
+        showError('Erreur de chargement — recharge la page.');
     }
 }
 
-/* ── Start ──────────────────────────────────────────────── */
+/* ── Navigation intro / calibration ────────────────────── */
+function goCalibration() {
+    showScreen('screen-calib');
+    // Initialise le fill des sliders de calibration
+    syncSlider(document.getElementById('cg'), 'cg-val');
+    syncSlider(document.getElementById('cc'), 'cc-val');
+}
+
+function goIntro() {
+    showScreen('screen-intro');
+}
+
+/* ── Start experiment ───────────────────────────────────── */
 function startExperiment() {
-    document.getElementById('intro').style.display = 'none';
-
-    const task = document.getElementById('task');
-    task.style.display = 'block';
-    task.classList.add('screen');
-
+    showScreen('screen-task');
+    document.getElementById('screen-task').classList.add('screen');
     render();
 }
 
-/* ── Render ─────────────────────────────────────────────── */
+/* ── Screen switcher ────────────────────────────────────── */
+function showScreen(id) {
+    ['screen-intro', 'screen-calib', 'screen-task'].forEach(s => {
+        const el = document.getElementById(s);
+        if (el) el.style.display = 'none';
+    });
+    const target = document.getElementById(id);
+    if (target) {
+        target.style.display = 'block';
+        target.classList.add('screen');
+        // Re-trigger animation
+        void target.offsetWidth;
+    }
+}
+
+/* ── Slider sync (fill track + pill value) ──────────────── */
+function syncSlider(input, pillId) {
+    const min  = Number(input.min);
+    const max  = Number(input.max);
+    const val  = Number(input.value);
+    const pct  = ((val - min) / (max - min)) * 100;
+
+    // Filled track via CSS custom property
+    input.style.setProperty('--fill', pct + '%');
+
+    // Pill value
+    const pill = document.getElementById(pillId);
+    if (pill) pill.textContent = val;
+}
+
+/* ── Render trial ───────────────────────────────────────── */
 function render() {
     if (idx >= stimuli.length) {
         showThanks();
         return;
     }
 
-    const s = stimuli[idx];
+    const s   = stimuli[idx];
     const pct = Math.round((idx / stimuli.length) * 100);
 
-    // Progress
-    document.getElementById('progress').style.width    = pct + '%';
-    document.getElementById('counter-left').textContent = `Extrait ${idx + 1} / ${stimuli.length}`;
+    document.getElementById('progress').style.width      = pct + '%';
+    document.getElementById('counter-left').textContent  = `Extrait ${idx + 1} / ${stimuli.length}`;
     document.getElementById('counter-right').textContent = pct + '%';
 
     canRespond = false;
 
-    // Préchargement du suivant
     if (idx + 1 < stimuli.length) preloadOne(stimuli[idx + 1]);
 
     document.getElementById('content').innerHTML = buildTrialHTML(s, idx);
 
-    // Bind player
     mountPlayer(s.audio_url);
+
+    // Init slider fills
+    ['g', 'c'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) syncSlider(el, id === 'g' ? 'gv' : 'cv');
+    });
 }
 
-/* ── Build trial HTML ───────────────────────────────────── */
+/* ── Trial HTML ─────────────────────────────────────────── */
 function buildTrialHTML(s, i) {
     return `
-        <div class="screen">
-            <!-- Player -->
-            <div class="player" id="player">
-                <button class="play-btn" id="play-btn" onclick="togglePlay()" aria-label="Lecture">
-                    ▶
-                </button>
-                <div class="player-info">
-                    <div class="player-title">Extrait ${i + 1}</div>
-                    <div class="player-bar-track">
-                        <div class="player-bar-fill" id="player-fill"></div>
-                    </div>
-                    <div class="waveform" id="waveform">${buildWaveform()}</div>
-                </div>
-            </div>
-
-            <audio id="audio" preload="auto">
-                <source src="${escHtml(s.audio_url)}" type="audio/mpeg">
-            </audio>
-
-            <!-- Sliders -->
-            <div class="slider-block">
-                <div class="slider-header">
-                    <span class="slider-label">Groove</span>
-                    <span class="slider-value" id="gv">4</span>
-                </div>
-                <div class="scale-labels">
-                    <span>Faible</span>
-                    <span>Fort</span>
-                </div>
-                <input type="range" id="g" min="1" max="7" value="4"
-                       oninput="document.getElementById('gv').textContent=this.value">
-            </div>
-
-            <div class="slider-block">
-                <div class="slider-header">
-                    <span class="slider-label">Complexité</span>
-                    <span class="slider-value" id="cv">4</span>
-                </div>
-                <div class="scale-labels">
-                    <span>Simple</span>
-                    <span>Complexe</span>
-                </div>
-                <input type="range" id="c" min="1" max="7" value="4"
-                       oninput="document.getElementById('cv').textContent=this.value">
-            </div>
-
-            <button class="btn" onclick="send()" id="btn" disabled>
-                Écoute en cours…
+    <div class="screen">
+        <!-- Player -->
+        <div class="player waiting" id="player">
+            <button class="play-btn" id="play-btn" onclick="togglePlay()" aria-label="Lecture / Pause">
+                ▶
             </button>
+            <div class="player-info">
+                <div class="player-meta">
+                    <span class="player-title">Extrait ${i + 1}</span>
+                    <span class="player-time" id="player-time">--:--</span>
+                </div>
+                <div class="player-bar-track" onclick="seekTo(event)" style="cursor:pointer">
+                    <div class="player-bar-fill" id="player-fill"></div>
+                </div>
+                <div class="waveform" id="waveform">${buildWaveform()}</div>
+            </div>
         </div>
-    `;
+
+        <div class="autoplay-hint" id="autoplay-hint">
+            ▶ Appuie sur le bouton pour écouter
+        </div>
+
+        <audio id="audio" preload="auto">
+            <source src="${escHtml(s.audio_url)}" type="audio/mpeg">
+        </audio>
+
+        <!-- Sliders -->
+        <div class="slider-block">
+            <div class="slider-header">
+                <span class="slider-label">Groove</span>
+                <span class="slider-pill" id="gv">4</span>
+            </div>
+            <div class="slider-anchors">
+                <span>Faible</span><span>Modéré</span><span>Fort</span>
+            </div>
+            <input type="range" id="g" min="1" max="7" value="4"
+                   oninput="syncSlider(this,'gv')">
+        </div>
+
+        <div class="slider-block">
+            <div class="slider-header">
+                <span class="slider-label">Complexité</span>
+                <span class="slider-pill" id="cv">4</span>
+            </div>
+            <div class="slider-anchors">
+                <span>Simple</span><span>Modérée</span><span>Complexe</span>
+            </div>
+            <input type="range" id="c" min="1" max="7" value="4"
+                   oninput="syncSlider(this,'cv')">
+        </div>
+
+        <button class="btn" onclick="send()" id="btn" disabled>
+            Écoute en cours…
+        </button>
+    </div>`;
 }
 
-/* ── Waveform decoration ────────────────────────────────── */
+/* ── Waveform ────────────────────────────────────────────── */
 function buildWaveform() {
-    const heights = [4, 7, 10, 14, 10, 16, 10, 7, 12, 16, 10, 7, 12, 8, 5];
+    const heights = [3, 6, 9, 13, 9, 15, 9, 6, 11, 15, 9, 6, 11, 7, 4];
     return heights.map((h, i) =>
-        `<span style="height:${h}px;--d:${(0.5 + i * 0.07).toFixed(2)}s"></span>`
+        `<span style="height:${h}px;--d:${(0.45 + i * 0.08).toFixed(2)}s"></span>`
     ).join('');
 }
 
-/* ── Audio player ───────────────────────────────────────── */
+/* ── Player mount ───────────────────────────────────────── */
 function mountPlayer(url) {
     const audio = document.getElementById('audio');
     currentAudio = audio;
 
-    audio.addEventListener('canplaythrough', onCanPlay, { once: true });
-    audio.addEventListener('timeupdate', onTimeUpdate);
-    audio.addEventListener('ended', onEnded);
-    audio.addEventListener('error', onAudioError);
+    audio.addEventListener('canplaythrough', onCanPlay,   { once: true });
+    audio.addEventListener('timeupdate',     onTimeUpdate);
+    audio.addEventListener('ended',          onEnded);
+    audio.addEventListener('error',          onAudioError);
 
-    // Autoplay tentative (navigateurs modernes bloquent sans interaction)
     audio.play().catch(() => {
-        /* silencieux — l'utilisateur cliquera sur play */
+        // Autoplay bloqué → affiche hint
+        const hint = document.getElementById('autoplay-hint');
+        if (hint) hint.classList.add('visible');
+
+        const player = document.getElementById('player');
+        if (player) player.classList.add('waiting');
     });
 }
 
 function onCanPlay() {
+    const hint = document.getElementById('autoplay-hint');
+    if (hint) hint.classList.remove('visible');
+
+    const player  = document.getElementById('player');
+    const playBtn = document.getElementById('play-btn');
+    if (player)  { player.classList.remove('waiting'); player.classList.add('playing'); }
+    if (playBtn) { playBtn.textContent = '⏸'; playBtn.classList.add('playing'); }
+
     start_time = Date.now();
+
     setTimeout(() => {
         canRespond = true;
         const btn = document.getElementById('btn');
-        if (btn) {
-            btn.disabled = false;
-            btn.textContent = 'Continuer →';
-        }
+        if (btn) { btn.disabled = false; btn.textContent = 'Continuer →'; }
     }, 800);
-
-    const player = document.getElementById('player');
-    const playBtn = document.getElementById('play-btn');
-    if (player) player.classList.add('playing');
-    if (playBtn) { playBtn.textContent = '⏸'; playBtn.classList.add('playing'); }
 }
 
 function onTimeUpdate() {
     const audio = currentAudio;
     if (!audio || !audio.duration) return;
-    const pct = (audio.currentTime / audio.duration) * 100;
+
+    const pct  = (audio.currentTime / audio.duration) * 100;
     const fill = document.getElementById('player-fill');
     if (fill) fill.style.width = pct + '%';
+
+    const timeEl = document.getElementById('player-time');
+    if (timeEl) timeEl.textContent = formatTime(audio.currentTime);
 }
 
 function onEnded() {
@@ -181,25 +234,37 @@ function onEnded() {
 }
 
 function onAudioError() {
+    console.warn('Audio error:', currentAudio?.src);
+    canRespond = true;
     const btn = document.getElementById('btn');
-    if (btn) {
-        btn.disabled = false;
-        btn.textContent = 'Continuer →';
-        canRespond = true;
-    }
-    console.warn('Audio load error for:', currentAudio?.src);
+    if (btn) { btn.disabled = false; btn.textContent = 'Continuer →'; }
+    const hint = document.getElementById('autoplay-hint');
+    if (hint) { hint.textContent = '⚠ Fichier audio indisponible'; hint.classList.add('visible'); }
 }
 
 function togglePlay() {
     const audio   = currentAudio;
     const player  = document.getElementById('player');
     const playBtn = document.getElementById('play-btn');
+    const hint    = document.getElementById('autoplay-hint');
     if (!audio) return;
 
     if (audio.paused) {
         audio.play().then(() => {
+            player?.classList.remove('waiting');
             player?.classList.add('playing');
             if (playBtn) { playBtn.textContent = '⏸'; playBtn.classList.add('playing'); }
+            if (hint)    hint.classList.remove('visible');
+
+            // Active le bouton si l'utilisateur a joué manuellement
+            if (!canRespond) {
+                start_time = Date.now();
+                setTimeout(() => {
+                    canRespond = true;
+                    const btn = document.getElementById('btn');
+                    if (btn) { btn.disabled = false; btn.textContent = 'Continuer →'; }
+                }, 800);
+            }
         }).catch(console.error);
     } else {
         audio.pause();
@@ -208,7 +273,17 @@ function togglePlay() {
     }
 }
 
-/* ── Send response ──────────────────────────────────────── */
+/* Seek en cliquant sur la barre de progression */
+function seekTo(event) {
+    const audio = currentAudio;
+    if (!audio || !audio.duration) return;
+    const track = event.currentTarget;
+    const rect  = track.getBoundingClientRect();
+    const pct   = (event.clientX - rect.left) / rect.width;
+    audio.currentTime = pct * audio.duration;
+}
+
+/* ── Send ────────────────────────────────────────────────── */
 async function send() {
     if (!canRespond || is_sending) return;
     is_sending = true;
@@ -219,7 +294,7 @@ async function send() {
 
     if (btn) { btn.disabled = true; btn.textContent = 'Envoi…'; }
 
-    // Stop audio proprement
+    // Stop audio
     if (currentAudio) {
         currentAudio.pause();
         currentAudio.src = '';
@@ -251,7 +326,6 @@ async function send() {
 
     idx++;
 
-    // Fixation cross
     document.getElementById('content').innerHTML =
         `<div class="fixation">+</div>`;
 
@@ -263,19 +337,20 @@ async function send() {
 
 /* ── Thank you ──────────────────────────────────────────── */
 function showThanks() {
-    document.getElementById('task').innerHTML = `
+    document.getElementById('screen-task').innerHTML = `
         <div class="thanks screen">
-            <div class="big">🙏</div>
+            <div class="thanks-icon">🙏</div>
             <h2>Merci pour votre participation</h2>
-            <p style="margin-top:12px;">
-                Vos réponses ont été enregistrées.<br>
-                Vous pouvez fermer cette page.
+            <p class="sub" style="margin-top:10px;">
+                Vos réponses ont bien été enregistrées.<br>
+                Vous pouvez fermer cette fenêtre.
             </p>
+            <div class="thanks-detail">ID session : ${participant_id || '—'}</div>
         </div>
     `;
 }
 
-/* ── Helpers ────────────────────────────────────────────── */
+/* ── Helpers ─────────────────────────────────────────────── */
 function shuffle(a) {
     for (let i = a.length - 1; i > 0; i--) {
         const j = Math.floor(Math.random() * (i + 1));
@@ -299,9 +374,18 @@ function escHtml(str) {
         .replace(/>/g, '&gt;');
 }
 
+function formatTime(sec) {
+    if (!isFinite(sec)) return '--:--';
+    const m = Math.floor(sec / 60);
+    const s = Math.floor(sec % 60);
+    return `${m}:${String(s).padStart(2, '0')}`;
+}
+
 function showError(msg) {
     document.getElementById('app').innerHTML =
-        `<div class="card" style="text-align:center;color:var(--muted)">${msg}</div>`;
+        `<div class="card" style="text-align:center;padding:40px 24px">
+            <p style="color:var(--muted);font-size:14px">${msg}</p>
+         </div>`;
 }
 
 /* ── Boot ───────────────────────────────────────────────── */

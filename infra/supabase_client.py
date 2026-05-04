@@ -13,8 +13,15 @@ def get_supabase() -> Client:
         _client = create_client(url, key)
     return _client
 
+
+# ✅ ALIAS (fix immédiat de ton bug)
+def get_supabase_client() -> Client:
+    return get_supabase()
+
+
 def insert_response(row: dict):
     return get_supabase().table("responses").insert(row).execute()
+
 
 def fetch_responses() -> list[dict]:
     return get_supabase().table("responses").select("*").execute().data

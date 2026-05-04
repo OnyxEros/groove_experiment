@@ -1,6 +1,8 @@
 from analysis.core.step import AnalysisStep
+from analysis.core.registry import register_step
 
 
+@register_step("full")
 class FullAnalysisStep(AnalysisStep):
 
     name = "full"

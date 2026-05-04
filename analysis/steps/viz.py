@@ -24,8 +24,8 @@ class VizStep(AnalysisStep):
         labels = cache.get("clusters", None)
         metrics = cache.get("metrics_matrix", None)
 
-        # =====================================================
-        # SPACES FIGURE — main contribution figure
+# =====================================================
+        # SPACES FIGURE — nécessite les deux projections UMAP + clusters
         # =====================================================
         if umap_realized is not None and umap_emergent is not None and labels is not None:
             SpacesFigure().plot(
@@ -37,19 +37,18 @@ class VizStep(AnalysisStep):
             )
 
         # =====================================================
-        # GENERATIVE VALIDATION
+        # GENERATIVE VALIDATION — nécessite seulement df
         # =====================================================
-        if umap_realized is not None and umap_emergent is not None and labels is not None:
-            GenerativeValidation().plot(
-                df=df,
-                path=rm.run_dir / "figures/generative_validation.png", 
-                verbose=True
-            )
+        GenerativeValidation().plot(
+            df=df,
+            path=rm.run_dir / "figures/generative_validation.png",
+            verbose=True
+        )
 
         # =====================================================
-        # CLUSTER INTERPRETATION
+        # CLUSTER INTERPRETATION — nécessite df + labels
         # =====================================================
-        if umap_realized is not None and umap_emergent is not None and labels is not None:
+        if labels is not None:
             ClusterInterpretation().plot(
                 df=df,
                 labels=labels,

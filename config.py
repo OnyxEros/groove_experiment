@@ -1,15 +1,27 @@
 """
 config.py
 =========
-Single source of truth for the groove experiment system.
-All paths, constants, and experiment parameters live here.
+Source unique de vérité pour le système Groove Experiment.
+
+Sections :
+    Environnement         — variables d'environnement et chemins
+    Structure temporelle  — BPM, résolution, durée du stimulus
+    Profil métrique       — poids de chaque position dans la mesure
+    Hi-hat                — paramètres de génération stochastique
+    Micro-timing          — paramètres du jitter expressif
+    Hiérarchie des voix   — pondération perceptive kick/snare/hihat
+    Push/pull inter-voix  — paramètre P (Keil 1995)
+    Design expérimental   — niveaux des variables manipulées
+    Analyse               — UMAP, clustering
 """
 
-from pathlib import Path
-from datetime import datetime
-import os
-import numpy as np
+from __future__ import annotations
 
+from datetime import datetime
+from pathlib import Path
+import os
+
+import numpy as np
 from dotenv import load_dotenv
 
 # =========================================================
@@ -24,75 +36,28 @@ BASE_DIR = Path(__file__).resolve().parent
 
 load_dotenv()
 
-ENV       = os.getenv("ENV", "dev")
-DEBUG     = os.getenv("DEBUG", "1") == "1"
-PORT      = int(os.getenv("PORT", "8000"))
-API_HOST  = "0.0.0.0"
+ENV        = os.getenv("ENV", "dev")
+DEBUG      = os.getenv("DEBUG", "1") == "1"
+PORT       = int(os.getenv("PORT", "8000"))
+API_HOST   = "0.0.0.0"
 API_RELOAD = ENV == "dev"
 
 # =========================================================
-# DATA DIRECTORIES
+# DATA DIRECTORIES & FILES
 # =========================================================
 
-DATA_DIR    = BASE_DIR / "data"
-MIDI_DIR    = DATA_DIR / "midi"
-WAV_DIR     = DATA_DIR / "wav"
-MP3_DIR     = DATA_DIR / "mp3"
-PREVIEW_DIR = DATA_DIR / "preview"
+DATA_DIR     = BASE_DIR / "data"
+MIDI_DIR     = DATA_DIR / "midi"
+WAV_DIR      = DATA_DIR / "wav"
+MP3_DIR      = DATA_DIR / "mp3"
+PREVIEW_DIR  = DATA_DIR / "preview"
 ANALYSIS_DIR = DATA_DIR / "analysis"
 
-# =========================================================
-# FILES
-# =========================================================
-
 METADATA_PATH = DATA_DIR / "metadata.csv"
-RESP_FILE     = DATA_DIR / "responses.csv"   # cache local Supabase
+RESP_FILE     = DATA_DIR / "responses.csv"
 
-# =========================================================
-# BACKEND
-# =========================================================
-
-BACKEND_DIR = BASE_DIR / "backend"
-INDEX_PATH  = BACKEND_DIR / "templates" / "index.html"
-
-# =========================================================
-# AUDIO ENGINE
-# =========================================================
-
-BPM           = 90
-STEPS_PER_BAR = 16          # résolution : doubles croches (16th notes)
-BARS          = 4           # mesures par stimulus
-SUBDIVISION   = 4           # 16th notes = 4 steps par temps
-STEPS_PER_BEAT = SUBDIVISION  # alias explicite
-
-# Profil métrique 4/4 en 16 steps
-# Valeurs : force métrique de chaque position (0.2 = faible, 1.0 = temps fort)
-# Justification : downbeat (1.0) > temps 3 (0.9) > contretemps (0.8/0.7) > offbeats (0.5/0.6) > doubles offbeats (0.2)
-METRIC_PROFILE = np.array([
-    1.0, 0.2, 0.6, 0.2,   # temps 1 et ses subdivisions
-    0.8, 0.2, 0.5, 0.2,   # temps 2
-    0.9, 0.2, 0.6, 0.2,   # temps 3
-    0.7, 0.2, 0.5, 0.2,   # temps 4
-], dtype=np.float64)
-
-assert len(METRIC_PROFILE) == STEPS_PER_BAR, \
-    f"METRIC_PROFILE doit avoir {STEPS_PER_BAR} entrées, en a {len(METRIC_PROFILE)}"
-
-# =========================================================
-# DERIVED VALUES
-# =========================================================
-
-def steps_total() -> int:
-    return STEPS_PER_BAR * BARS
-
-def step_duration_seconds() -> float:
-    """Durée d'un step en secondes (cohérent avec BPM + résolution)."""
-    return 60 / (BPM * (STEPS_PER_BAR / 4))
-
-# =========================================================
-# ASSETS
-# =========================================================
-
+BACKEND_DIR    = BASE_DIR / "backend"
+INDEX_PATH     = BACKEND_DIR / "templates" / "index.html"
 SOUNDFONT_PATH = BASE_DIR / "soundfont.sf2"
 
 # =========================================================
@@ -103,15 +68,138 @@ SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 
 # =========================================================
-# EXPERIMENT DESIGN
+# STRUCTURE TEMPORELLE
 # =========================================================
 
-SEED    = 42
-REPEATS = 8
+BPM           = 90
+STEPS_PER_BAR = 16
+TOTAL_BARS    = 6
+LOOP_BARS     = 2
 
-S_LEVELS = [0, 1, 2]          # syncopation  : 0=métrique, 1=mixte, 2=anti-métrique
-D_LEVELS = [0, 1, 2]          # density      : 0=sparse, 1=medium, 2=dense
-E_LEVELS = [0.0, 0.5, 1.0]    # micro-timing : 0=quantisé, 0.5=léger, 1.0=fort
+assert TOTAL_BARS % LOOP_BARS == 0, (
+    f"LOOP_BARS ({LOOP_BARS}) doit être un diviseur de TOTAL_BARS ({TOTAL_BARS})."
+)
+
+N_LOOPS = TOTAL_BARS // LOOP_BARS
+
+# =========================================================
+# PROFIL MÉTRIQUE
+# =========================================================
+
+METRIC_PROFILE = np.array([
+    1.0, 0.2, 0.6, 0.2,   # temps 1
+    0.8, 0.2, 0.5, 0.2,   # temps 2
+    0.9, 0.2, 0.6, 0.2,   # temps 3
+    0.7, 0.2, 0.5, 0.2,   # temps 4
+], dtype=np.float64)
+
+SYNCOPATION_STRONG_THRESHOLD = 0.5
+
+assert len(METRIC_PROFILE) == STEPS_PER_BAR
+
+# =========================================================
+# HI-HAT — GÉNÉRATION STOCHASTIQUE
+# =========================================================
+
+HIHAT_DENSITY_PROBS: dict[int, float] = {
+    0: 0.30,
+    1: 0.50,
+    2: 0.70,
+}
+
+HIHAT_PROB_MIN = 0.01
+HIHAT_PROB_MAX = 0.90
+
+# =========================================================
+# MICRO-TIMING — JITTER EXPRESSIF
+# =========================================================
+
+SWING_BASELINE = 0.04
+"""
+Swing incompressible appliqué à toutes les conditions, y compris E=0.
+
+Rationale :
+    Un batteur humain ne joue jamais à déviation zéro — même en jouant
+    "straight", il produit un micro-swing naturel (Keil 1995).
+    La grille MIDI parfaite n'est pas une référence perceptive humaine.
+
+    E=0 représente donc "tight / peu expressif", pas "robot quantisé".
+    Ce swing baseline garantit que toutes les conditions sonnent musicales,
+    ce qui est une condition nécessaire pour que les participants puissent
+    évaluer le groove plutôt que réagir à la mécanique du son.
+
+    Valeur : 4% du step_duration ≈ 3ms à 90 BPM.
+    En dessous du seuil de détection comme déviation isolée (~6ms),
+    mais suffisant pour humaniser le feel global du pattern.
+
+    Swing total = SWING_BASELINE + SWING_MAX_RATIO × E
+    E=0   → 4%  du step ≈  3ms  (tight, humanisé)
+    E=0.5 → 10% du step ≈  8ms  (groove modéré)
+    E=1   → 16% du step ≈ 12ms  (groove expressif)
+"""
+
+SWING_MAX_RATIO = 0.12
+"""
+Amplitude additionnelle du swing contrôlée par E.
+Swing total = SWING_BASELINE + SWING_MAX_RATIO × E × amount.
+"""
+
+DRIFT_MAX_RATIO = 0.10
+"""Amplitude max du drift sinusoïdal en fraction du step_duration."""
+
+NOISE_MAX_RATIO = 0.10
+"""Écart-type max du bruit gaussien corrélé en fraction du step_duration."""
+
+# =========================================================
+# HIÉRARCHIE PERCEPTIVE DES VOIX
+# =========================================================
+
+KICK_TIMING_SCALE  = 0.20
+SNARE_TIMING_SCALE = 0.30
+HIHAT_TIMING_SCALE = 1.00
+
+KICK_VOICE_WEIGHT  = 0.30
+SNARE_VOICE_WEIGHT = 0.50
+HIHAT_VOICE_WEIGHT = 1.00
+
+KICK_DENSITY_WEIGHT  = 0.20
+SNARE_DENSITY_WEIGHT = 0.20
+HIHAT_DENSITY_WEIGHT = 0.60
+
+assert abs(KICK_DENSITY_WEIGHT + SNARE_DENSITY_WEIGHT + HIHAT_DENSITY_WEIGHT - 1.0) < 1e-9
+
+# =========================================================
+# PUSH/PULL INTER-VOIX (Keil 1995)
+# =========================================================
+
+PUSH_MAX_RATIO = 0.18
+"""
+Décalage systématique maximal du hihat en fraction du step_duration.
+≈ 14ms à 90 BPM.
+P > 0 : hihat en avance (rushing)
+P < 0 : hihat en retard (laid-back)
+"""
+
+# =========================================================
+# DESIGN EXPÉRIMENTAL
+# =========================================================
+
+# Graine maître — reproductibilité globale
+SEED = 42
+
+# Répétitions par phase — différenciées pour équilibrer P1/P2 vs P3
+REPEATS_P1 = 5
+REPEATS_P2 = 4
+REPEATS_P3 = 1
+# Total : 128 stimuli
+
+# Alias plat — utilisé par print_config_summary
+REPEATS = REPEATS_P3
+
+S_LEVELS = [0, 1, 2]
+D_LEVELS = [0, 1, 2]
+E_LEVELS = [0.0, 0.5, 1.0]
+P_LEVELS = [-1, 0, 1]
 
 # =========================================================
 # UMAP
@@ -126,18 +214,71 @@ UMAP_CONFIG = {
 }
 
 # =========================================================
+# DERIVED VALUES
+# =========================================================
+
+def loop_steps() -> int:
+    return STEPS_PER_BAR * LOOP_BARS
+
+def total_steps() -> int:
+    return STEPS_PER_BAR * TOTAL_BARS
+
+def step_duration_seconds() -> float:
+    return 60.0 / (BPM * (STEPS_PER_BAR / 4))
+
+def stimulus_duration_seconds() -> float:
+    return total_steps() * step_duration_seconds()
+
+def alpha_from_sync_level(sync_level: int) -> float:
+    """S_mv → alpha continu [0, 1]. 0 = métrique, 1 = anti-métrique."""
+    max_level = max(S_LEVELS)
+    return sync_level / max_level if max_level > 0 else 0.0
+
+def push_from_p_level(p_level: int) -> float:
+    """P_level → décalage en fraction de step_duration."""
+    max_level = max(abs(p) for p in P_LEVELS) if P_LEVELS else 1
+    return (p_level / max_level) * PUSH_MAX_RATIO if max_level > 0 else 0.0
+
+# =========================================================
 # HELPERS
 # =========================================================
 
 def ensure_data_dirs() -> None:
-    """Crée les dossiers de données s'ils n'existent pas."""
     for d in [DATA_DIR, MIDI_DIR, WAV_DIR, MP3_DIR, ANALYSIS_DIR]:
         d.mkdir(parents=True, exist_ok=True)
 
-
 def get_run_dir() -> Path:
-    """Retourne un dossier d'analyse horodaté et le crée."""
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    path = ANALYSIS_DIR / f"run_{timestamp}"
+    path = ANALYSIS_DIR / f"run_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
     path.mkdir(parents=True, exist_ok=True)
     return path
+
+def print_config_summary() -> None:
+    n_conditions = len(S_LEVELS) * len(D_LEVELS) * len(E_LEVELS) * len(P_LEVELS)
+    sd_ms        = step_duration_seconds() * 1000
+    print("\n" + "=" * 62)
+    print("  CONFIGURATION — Groove Experiment")
+    print("=" * 62)
+    print(f"  Tempo                  : {BPM} BPM")
+    print(f"  Résolution             : {STEPS_PER_BAR} steps/bar  (16th notes)")
+    print(f"  Durée d'un step        : {sd_ms:.1f} ms")
+    print()
+    print(f"  Stimulus               : {TOTAL_BARS} mesures  ({total_steps()} steps)")
+    print(f"  Durée stimulus         : {stimulus_duration_seconds():.1f} s")
+    print(f"  Boucle rythmique       : {LOOP_BARS} mesures  ({loop_steps()} steps)")
+    print(f"  Répétitions de boucle  : {N_LOOPS}×")
+    print()
+    print(f"  S_LEVELS               : {S_LEVELS}  (syncopation)")
+    print(f"  D_LEVELS               : {D_LEVELS}  (densité)")
+    print(f"  E_LEVELS               : {E_LEVELS}  (micro-timing)")
+    print(f"  P_LEVELS               : {P_LEVELS}  (push/pull inter-voix)")
+    print(f"  Conditions factorielles: {n_conditions}")
+    print(f"  Répétitions/condition  : {REPEATS}")
+    print()
+    print(f"  Swing baseline         : {SWING_BASELINE*100:.0f}% du step"
+          f" ≈ {SWING_BASELINE*sd_ms:.1f}ms  (E=0, toutes conditions)")
+    print(f"  Swing max (E=1)        : {(SWING_BASELINE+SWING_MAX_RATIO)*100:.0f}%"
+          f" ≈ {(SWING_BASELINE+SWING_MAX_RATIO)*sd_ms:.1f}ms")
+    print(f"  Drift max              : {DRIFT_MAX_RATIO*100:.0f}% du step")
+    print(f"  Noise max (σ)          : {NOISE_MAX_RATIO*100:.0f}% du step")
+    print(f"  Push max               : {PUSH_MAX_RATIO*100:.0f}% du step")
+    print("=" * 62 + "\n")

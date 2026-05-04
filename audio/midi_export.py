@@ -1,3 +1,14 @@
+"""
+audio/midi_export.py
+====================
+Export MIDI des stimuli générés.
+
+Vélocités : si le stimulus contient des vecteurs *_vel (v3+), ils sont utilisés.
+Sinon fallback sur une vélocité fixe par voix (rétro-compatible v1/v2).
+Les vélocités fixes par défaut reflètent la hiérarchie perceptive :
+kick (95) > snare (90) > hihat (75).
+"""
+
 import pretty_midi
 import numpy as np
 from pathlib import Path
@@ -7,108 +18,93 @@ import config
 
 
 # =========================================================
-# MIDI EXPORTER
+# VELOCITÉS PAR DÉFAUT (fallback si pas de *_vel dans le stim)
+# =========================================================
+
+DEFAULT_VELOCITY = {
+    "kick":  95,
+    "snare": 90,
+    "hihat": 75,
+}
+
+
+# =========================================================
+# EXPORTER
 # =========================================================
 
 class MIDIExporter:
+
     def __init__(self):
-
-        # ===============================
-        # GLOBAL CONFIG ALIGNMENT
-        # ===============================
-        self.bpm = config.BPM
-        self.steps_per_bar = config.STEPS_PER_BAR
-        self.bars = config.BARS
-
-        # single source of truth
+        self.bpm           = config.BPM
         self.step_duration = config.step_duration_seconds()
-        self.total_steps = config.steps_total()
-
-        # drum mapping (GM standard)
         self.map = {
-            "kick": 36,
+            "kick":  36,
             "snare": 38,
-            "hihat": 42
+            "hihat": 42,
         }
 
-    # =========================================================
-    # TRACK BUILDING
-    # =========================================================
-
-    def build_track(self, pattern, jitter, pitch):
+    def build_track(
+        self,
+        pattern:  np.ndarray,
+        jitter:   np.ndarray,
+        pitch:    int,
+        vel:      np.ndarray | None = None,
+        default_vel: int = 90,
+    ) -> list[pretty_midi.Note]:
+        """
+        Args:
+            pattern     : pattern binaire (0/1)
+            jitter      : décalages temporels en secondes
+            pitch       : numéro MIDI de la note
+            vel         : vecteur de vélocités optionnel (0–127)
+            default_vel : vélocité fixe si vel est None
+        """
+        if len(pattern) != len(jitter):
+            raise ValueError("Pattern et jitter doivent avoir la même longueur")
 
         notes = []
-        n = len(pattern)
+        for i, hit in enumerate(pattern):
+            if hit != 1.0:
+                continue
 
-        for i in range(n):
+            start    = max(0.0, i * self.step_duration + jitter[i])
+            end      = start + self.step_duration * 0.9
+            velocity = int(np.clip(vel[i], 1, 127)) if vel is not None else default_vel
 
-            if pattern[i] == 1:
-
-                start = i * self.step_duration + jitter[i]
-                start = max(0.0, start)
-
-                # NOTE LENGTH (coherent with grid)
-                end = start + self.step_duration * 0.9
-
-                notes.append(
-                    pretty_midi.Note(
-                        velocity=100,
-                        pitch=pitch,
-                        start=start,
-                        end=end
-                    )
-                )
+            notes.append(pretty_midi.Note(
+                velocity=velocity,
+                pitch=pitch,
+                start=start,
+                end=end,
+            ))
 
         return notes
 
-    # =========================================================
-    # EXPORT SINGLE STIMULUS
-    # =========================================================
-
-    def export(self, stim, filename):
-
+    def export(self, stim: dict, filename) -> None:
         pm = pretty_midi.PrettyMIDI(initial_tempo=self.bpm)
+        pm.time_signature_changes.append(pretty_midi.TimeSignature(4, 4, 0))
 
-        # time signature fixed
-        pm.time_signature_changes.append(
-            pretty_midi.TimeSignature(4, 4, 0)
-        )
-
-        # =====================================================
-        # OPTIONAL SAFETY CHECK (important for research)
-        # =====================================================
-        expected_steps = config.steps_total()
-
-        for name in ["kick", "snare", "hihat"]:
-            if len(stim[name]) < expected_steps:
+        expected_steps = config.total_steps()
+        for name in ("kick", "snare", "hihat"):
+            if len(stim[name]) != expected_steps:
                 raise ValueError(
-                    f"{name} pattern too short: "
-                    f"{len(stim[name])} < {expected_steps}"
+                    f"{name} length mismatch: "
+                    f"{len(stim[name])} != {expected_steps}"
                 )
 
-        # =====================================================
-        # BUILD INSTRUMENTS
-        # =====================================================
-
-        for name in ["kick", "snare", "hihat"]:
-
-            inst = pretty_midi.Instrument(
-                program=0,
-                is_drum=True
-            )
-
-            pattern = stim[name]
-            jitter = stim[f"{name}_jitter"]
+        for name in ("kick", "snare", "hihat"):
+            inst      = pretty_midi.Instrument(program=0, is_drum=True)
+            vel_array = stim.get(f"{name}_vel", None)   # None si absent (v1/v2)
 
             inst.notes = self.build_track(
-                pattern,
-                jitter,
-                self.map[name]
+                stim[name],
+                stim[f"{name}_jitter"],
+                self.map[name],
+                vel=vel_array,
+                default_vel=DEFAULT_VELOCITY[name],
             )
-
             pm.instruments.append(inst)
 
-        # write MIDI
         pm.write(str(filename))
 
 
@@ -117,21 +113,16 @@ class MIDIExporter:
 # =========================================================
 
 def export_all(df, stim_cache, out_dir=config.MIDI_DIR):
-
-    out_dir = Path(out_dir)
+    out_dir  = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
-
     exporter = MIDIExporter()
 
     for _, row in tqdm(
         df.iterrows(),
         total=len(df),
         desc="🎼 Exporting MIDI",
-        unit="file"
+        unit="file",
     ):
-
-        stim = stim_cache[row["id"]]
-
+        stim     = stim_cache[row["id"]]
         filename = out_dir / f"stim_{int(row['id']):04d}.mid"
-
         exporter.export(stim, filename)
