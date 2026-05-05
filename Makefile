@@ -11,7 +11,7 @@ PIP         ?= pip
 
 # ── Experiment defaults (overrideable on CLI) ───────────────
 SEED        ?= 42
-REPEATS     ?= 
+REPEATS     ?=
 MODE        ?= full
 STEPS       ?= embeddings projection clustering metrics_view viz export
 FEATURE_SET ?= all
@@ -50,21 +50,22 @@ help:
 	@printf "\n"
 
 	@printf "$(BOLD)$(CYAN)🧠  ANALYSIS$(RESET)\n"
-	@printf "  %-28s %s\n" "make analysis"         "Full analysis pipeline  (MODE=full)"
-	@printf "  %-28s %s\n" "make analysis-audio"   "Perceptual-focused pipeline"
-	@printf "  %-28s %s\n" "make analysis-groove"  "Groove-focused pipeline"
-	@printf "  %-28s %s\n" "make analysis-custom"  "Custom steps  (STEPS='...')"
+	@printf "  %-28s %s\n" "make new-run"          "Crée un nouveau dossier de run (requis avant analysis)"
+	@printf "  %-28s %s\n" "make analysis"         "new-run + full analysis pipeline  (MODE=full)"
+	@printf "  %-28s %s\n" "make analysis-audio"   "new-run + perceptual-focused pipeline"
+	@printf "  %-28s %s\n" "make analysis-groove"  "new-run + groove-focused pipeline"
+	@printf "  %-28s %s\n" "make analysis-custom"  "new-run + custom steps  (STEPS='...')"
 	@printf "\n"
 
 	@printf "$(BOLD)$(CYAN)📊  MODELLING$(RESET)\n"
-	@printf "  %-28s %s\n" "make regression"        "One feature set  (FEATURE_SET=design|acoustic|all)"
-	@printf "  %-28s %s\n" "make regression-design"  "Design params only  (S_mv, D_mv, E)"
+	@printf "  %-28s %s\n" "make regression"          "One feature set  (FEATURE_SET=design|acoustic|all)"
+	@printf "  %-28s %s\n" "make regression-design"   "Design params only  (S_mv, D_mv, E)"
 	@printf "  %-28s %s\n" "make regression-acoustic" "Acoustic metrics only  (D, I, V, S_real, E_real)"
-	@printf "  %-28s %s\n" "make regression-all"    "All 3 feature sets — thesis mode"
-	@printf "  %-28s %s\n" "make perception"         "Perceptual alignment  (latent → ratings)"
-	@printf "  %-28s %s\n" "make perception-space"   "Geometric analysis of groove in UMAP space"
-	@printf "  %-28s %s\n" "make refresh"            "Re-fetch Supabase + rerun regression + perception"
-	@printf "  %-28s %s\n" "make regression-fast"    "Regression without Supabase check  (offline)"
+	@printf "  %-28s %s\n" "make regression-all"      "All 3 feature sets — thesis mode"
+	@printf "  %-28s %s\n" "make perception"           "Perceptual alignment  (latent → ratings)"
+	@printf "  %-28s %s\n" "make perception-space"     "Geometric analysis of groove in UMAP space"
+	@printf "  %-28s %s\n" "make refresh"              "Re-fetch Supabase + rerun regression + perception"
+	@printf "  %-28s %s\n" "make regression-fast"      "Regression without Supabase check  (offline)"
 	@printf "\n"
 
 	@printf "$(BOLD)$(CYAN)☁️   INFRA$(RESET)\n"
@@ -74,15 +75,15 @@ help:
 	@printf "\n"
 
 	@printf "$(BOLD)$(CYAN)🚀  FULL PIPELINES$(RESET)\n"
-	@printf "  %-28s %s\n" "make all"     "generate + analysis + sync + regression-all + perception"
-	@printf "  %-28s %s\n" "make paper"   "sync + regression-all + perception + perception-space"
+	@printf "  %-28s %s\n" "make all"     "generate + new-run + analysis + sync + regression-all + perception"
+	@printf "  %-28s %s\n" "make paper"   "new-run + sync + regression-all + perception + perception-space"
 	@printf "  %-28s %s\n" "make repro"   "clean + all  (fully reproducible from scratch)"
 	@printf "\n"
 
 	@printf "$(BOLD)$(CYAN)🧹  CLEAN$(RESET)\n"
 	@printf "  %-28s %s\n" "make clean"            "Full clean  (all targets)"
 	@printf "  %-28s %s\n" "make clean-outputs"    "MIDI / WAV / MP3 / PREVIEW"
-	@printf "  %-28s %s\n" "make clean-analysis"   "data/analysis/"
+	@printf "  %-28s %s\n" "make clean-analysis"   "data/analysis/ + .current_run"
 	@printf "  %-28s %s\n" "make clean-metadata"   "data/metadata.csv"
 	@printf "  %-28s %s\n" "make clean-responses"  "data/responses.csv  (local Supabase cache)"
 	@printf "  %-28s %s\n" "make clean-cache"      "__pycache__ + *.pyc"
@@ -182,6 +183,14 @@ clean-cache:
 	$(PYTHON) cli.py --clean cache
 
 # ===========================================================
+# DOSSIER DE RUN D'ANALYSE
+# ===========================================================
+
+.PHONY: new-run
+new-run:
+	$(PYTHON) cli.py --new-run
+
+# ===========================================================
 # ANALYSIS ENGINE
 # ===========================================================
 
@@ -209,12 +218,10 @@ analysis-custom: _wipe
 .PHONY: regression regression-design regression-acoustic regression-all
 .PHONY: regression-fast perception perception-space refresh
 
-# Un seul feature set (configurable)
 regression: _wipe
 	$(PYTHON) cli.py --regression --feature-set $(FEATURE_SET) $(_NO_DB_FLAG)
 	@$(MAKE) --no-print-directory _wipe
 
-# Raccourcis feature sets
 regression-design: _wipe
 	$(PYTHON) cli.py --regression --feature-set design $(_NO_DB_FLAG)
 	@$(MAKE) --no-print-directory _wipe
@@ -223,12 +230,10 @@ regression-acoustic: _wipe
 	$(PYTHON) cli.py --regression --feature-set acoustic $(_NO_DB_FLAG)
 	@$(MAKE) --no-print-directory _wipe
 
-# Tous les feature sets d'un coup (mode mémoire)
 regression-all: _wipe
 	$(PYTHON) cli.py --regression-all $(_NO_DB_FLAG)
 	@$(MAKE) --no-print-directory _wipe
 
-# Offline (skip Supabase check)
 regression-fast: _wipe
 	$(PYTHON) cli.py --regression --feature-set $(FEATURE_SET) --no-check-db
 	@$(MAKE) --no-print-directory _wipe
@@ -241,7 +246,6 @@ perception-space: _wipe
 	$(PYTHON) cli.py --perception-space
 	@$(MAKE) --no-print-directory _wipe
 
-# Re-fetch Supabase + modèles complets
 refresh: _wipe
 	$(PYTHON) cli.py --regression-all --perception --refresh $(_NO_DB_FLAG)
 	@$(MAKE) --no-print-directory _wipe
@@ -267,20 +271,22 @@ ui:
 
 .PHONY: all paper repro
 
-# Pipeline complet (génération → analyse → sync → modèles)
-all: generate analysis sync regression-all perception
+# Option propre — new-run seulement dans all, pas dans analysis
+all: generate new-run _wipe
+	$(PYTHON) cli.py --analysis --analysis-mode full
+	@$(MAKE) --no-print-directory _wipe
+	$(PYTHON) cli.py --sync
+	$(PYTHON) cli.py --regression-all $(_NO_DB_FLAG)
+	$(PYTHON) cli.py --perception
 	@printf "\n$(BOLD)$(GREEN)✔  Full pipeline complete$(RESET)\n\n"
 
-# Pipeline mémoire : données fraîches → tous les modèles → figures
-# Lance regression-all avec --refresh (1 seul fetch Supabase)
-paper: _wipe
+paper: new-run _wipe
 	@printf "$(BOLD)$(CYAN)📄  Paper pipeline$(RESET)\n"
 	$(PYTHON) cli.py --sync
 	$(PYTHON) cli.py --regression-all --refresh --perception --perception-space $(_NO_DB_FLAG)
 	@$(MAKE) --no-print-directory _wipe
 	@printf "\n$(BOLD)$(GREEN)✔  Paper pipeline complete$(RESET)\n\n"
 
-# Run totalement reproductible depuis zéro
 repro: clean all
 	@printf "\n$(BOLD)$(GREEN)✔  Reproducible run complete$(RESET)\n\n"
 
@@ -291,7 +297,6 @@ repro: clean all
 .PHONY: dev
 dev:
 	@printf "$(BOLD)$(CYAN)🚀  Starting backend + Streamlit$(RESET)\n"
-	@# Utilise trap pour killer les deux processes ensemble (Ctrl+C)
 	@$(PYTHON) run_server.py & SERVER_PID=$$!; \
 	 sleep 1 && streamlit run analysis/explorer/app.py & UI_PID=$$!; \
 	 trap "kill $$SERVER_PID $$UI_PID 2>/dev/null" INT TERM; \

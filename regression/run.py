@@ -20,6 +20,14 @@ from regression.data_loader import load_regression_data, describe_dataset
 from regression.model import fit_models
 from regression.evaluation import evaluate_models, print_report, save_report
 
+from config import get_current_run
+
+def _make_output_dir(feature_set: str) -> Path:
+    run_dir = get_current_run()   # erreur claire si oublié
+    out = run_dir / "regression" / feature_set
+    out.mkdir(parents=True, exist_ok=True)
+    return out
+
 
 # =========================================================
 # RUN — UN FEATURE SET
@@ -201,18 +209,10 @@ def run_regression_all(
 # HELPERS
 # =========================================================
 
-def _make_output_dir(feature_set: str) -> Path:
-    from config import ANALYSIS_DIR
-    ts  = datetime.now().strftime("%Y%m%d_%H%M%S")
-    out = ANALYSIS_DIR / f"run_{ts}" / "regression" / feature_set
-    out.mkdir(parents=True, exist_ok=True)
-    return out
-
 
 def _make_run_root() -> Path:
-    from config import ANALYSIS_DIR
-    ts  = datetime.now().strftime("%Y%m%d_%H%M%S")
-    out = ANALYSIS_DIR / f"run_{ts}" / "regression"
+    run_dir = get_current_run()   # déjà importé en haut du fichier
+    out = run_dir / "regression"
     out.mkdir(parents=True, exist_ok=True)
     return out
 

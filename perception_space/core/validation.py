@@ -7,7 +7,11 @@ def validate_perception_df(df: pd.DataFrame):
     if missing:
         raise ValueError(f"Missing columns: {missing}")
 
-    if df.isna().any().any():
-        raise ValueError("NaN values detected in perception data")
+    # Seul groove est strictement requis sans NaN
+    if df["groove"].isna().any():
+        raise ValueError("NaN values detected in 'groove' column")
+    
+    if "stimulus_id" in df.columns and df["stimulus_id"].isna().any():
+        raise ValueError("NaN values detected in 'stimulus_id' column")
 
     return True

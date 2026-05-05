@@ -299,12 +299,16 @@ def _clean_analysis(subdirs: list[str] | None = None) -> None:
     if subdirs is None:
         shutil.rmtree(ANALYSIS_DIR)
         _print(f"  removed {ANALYSIS_DIR}", style="dim")
+        # effacer le pointeur — il pointe vers un dossier qui n'existe plus
+        from config import _CURRENT_RUN_FILE
+        if _CURRENT_RUN_FILE.exists():
+            _CURRENT_RUN_FILE.unlink()
+            _print(f"  removed .current_run", style="dim")
     else:
         for sub in subdirs:
             p = ANALYSIS_DIR / sub
             if p.exists():
                 shutil.rmtree(p)
-
 
 def _clean_pycache() -> None:
     removed = 0
@@ -429,6 +433,15 @@ def cmd_preview(seed: int = 42, dry_run: bool = False) -> None:
 
 
 # =========================================================
+# DOSSIER DE RUN
+# =========================================================
+
+def cmd_new_run() -> None:
+    from config import new_run
+    run_dir = new_run()
+    _print(f"✔  Run courant : {run_dir}")
+
+# =========================================================
 # ANALYSIS
 # =========================================================
 
@@ -550,7 +563,8 @@ def cmd_perception(refresh: bool = False, dry_run: bool = False) -> None:
         feature_cols = [c for c in ["D", "I", "V", "S_real", "E_real"] if c in df.columns]
         model, score = fit_alignment(df[feature_cols].values, df["groove_mean"].values)
 
-    _print(f"📊  Perceptual alignment R² = {score:.4f}")
+    r2 = score.get("r2_cv_mean", score.get("r2"))
+    _print(f"📊  Perceptual alignment R² = {r2:.4f}")
 
     if "cluster" in df.columns:
         scores = cluster_perception_diff(df["cluster"].values, df["groove_mean"].values)
@@ -558,30 +572,34 @@ def cmd_perception(refresh: bool = False, dry_run: bool = False) -> None:
 
 
 def cmd_perception_space(refresh: bool = False, dry_run: bool = False) -> None:
-    """Analyse géométrique du groove dans l'espace latent UMAP."""
     if dry_run:
         _print("🧠  [DRY-RUN] Perception space skipped")
         return
 
-    import pandas as pd
     from perception_space.run import run_perception_space
+    from perception.loader import load_ratings_df
 
-    with step("Load metadata"):
-        df = pd.read_csv(METADATA_PATH)
-        if "stim_id" not in df.columns and "id" in df.columns:
-            df = df.rename(columns={"id": "stim_id"})
+    with step("Load perceptual ratings"):
+        df = load_ratings_df(refresh=refresh)
 
-    with step("Resolve latest analysis run"):
-        from analysis.io.run_resolver import get_latest_run
-        try:
-            run_dir = get_latest_run()
-        except (ValueError, FileNotFoundError) as exc:
-            safe_exit(
-                f"No analysis run found — launch `make analysis` first.\n({exc})"
-            )
+        df = df.rename(columns={
+            "stim_id":         "stimulus_id",
+            "groove_mean":     "groove",
+            "complexity_mean": "complexity",
+        })
+
+        # stimulus_id doit être un entier (index dans les embeddings)
+        df["stimulus_id"] = df["stimulus_id"].str.replace("stim_", "").astype(int)
+
+        # groove requis — on droppe si absent
+        df = df.dropna(subset=["groove"])
+
+        # complexity optionnelle — on impute avec la médiane
+        if "complexity" in df.columns and df["complexity"].isna().any():
+            df["complexity"] = df["complexity"].fillna(df["complexity"].median())
 
     with step("Perception space geometry"):
-        run_perception_space(run_dir=run_dir, perception_data=df)
+        run_perception_space(perception_data=df)
 
     _print("✔  Perception space computed")
 
@@ -609,6 +627,15 @@ def cmd_doctor() -> None:
 # =========================================================
 # ARGUMENT PARSER
 # =========================================================
+def _resolve_run_dir(create: bool = False) -> Path | None:
+    """
+    create=True  → nouveau run (pour --analysis)
+    create=False → dernier run existant (pour --regression, --perception-space)
+    """
+    from config import get_run_dir, get_latest_run_dir
+    if create:
+        return get_run_dir()
+    return get_latest_run_dir()
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
@@ -620,6 +647,7 @@ def build_parser() -> argparse.ArgumentParser:
 QUICK REFERENCE
 ──────────────────────────────────────────────────────────────
  Generate stimuli         python cli.py --generate
+ Crée dossier de run      python cli.py --new-run
  Run full analysis        python cli.py --analysis --analysis-mode full
  Fetch Supabase data      python cli.py --sync
  Run all regressions      python cli.py --regression-all --refresh
@@ -646,6 +674,9 @@ QUICK REFERENCE
     g.add_argument("--seed",       type=int, default=42,   metavar="N",  help="Master random seed (default: 42)")
     g.add_argument("--repeats",    type=int, default=None, metavar="N",  help="Repeats per condition (default: config.REPEATS)")
     g.add_argument("--skip-audio", action="store_true",                  help="Skip WAV/MP3 rendering (faster, no SoundFont needed)")
+
+    # ── Dossier Run ─────────────────────────────────────────
+    g.add_argument("--new-run", action="store_true", help="Crée un nouveau dossier de run et le définit comme courant")
 
     # ── Analysis ─────────────────────────────────────────
     g = parser.add_argument_group("Analysis options")
@@ -707,6 +738,7 @@ QUICK REFERENCE
 _ACTION_FLAGS = {
     "generate", "analysis", "analysis_only",
     "preview",
+    "new_run",              
     "regression", "regression_all",
     "perception", "perception_space",
     "sync",
@@ -754,6 +786,12 @@ def main() -> None:
             skip_audio=args.skip_audio,
             dry_run=dry,
         )
+
+
+    # 2.0 création dossier de run
+    if args.new_run:
+        cmd_new_run()
+        return
 
     # 2. Analyse
     if args.analysis or args.analysis_only:

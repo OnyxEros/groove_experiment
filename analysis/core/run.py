@@ -1,9 +1,15 @@
+"""
+analysis/core/run.py
+====================
+Point d'entrée du module d'analyse du dataset.
+"""
+
 from analysis.core.engine import AnalysisEngine
 from analysis.core.context import AnalysisContext
 from analysis.core.pipeline import build_pipeline
-from config import get_run_dir
 from analysis.core.registry import load_steps
 from groove.generator import run_experiment
+from config import get_current_run
 
 
 def run_analysis(mode: str, steps=None, save=True, seed=42):
@@ -13,7 +19,7 @@ def run_analysis(mode: str, steps=None, save=True, seed=42):
     # =====================================================
     load_steps()
 
-    run_dir = get_run_dir()
+    run_dir = get_current_run()   # lit .current_run — erreur claire si absent
 
     # =====================================================
     # data source unique
@@ -25,8 +31,8 @@ def run_analysis(mode: str, steps=None, save=True, seed=42):
         dataset=df,
         seed=seed,
         config={
-            "seed": seed,
-            "n_clusters": 6
+            "seed":       seed,
+            "n_clusters": 6,
         }
     )
 
@@ -49,7 +55,6 @@ def run_analysis(mode: str, steps=None, save=True, seed=42):
                 "viz",
                 "export",
             ]
-
         elif mode == "audio":
             pipeline_steps = [
                 "embeddings",
@@ -58,7 +63,6 @@ def run_analysis(mode: str, steps=None, save=True, seed=42):
                 "viz",
                 "export",
             ]
-
         elif mode == "groove":
             pipeline_steps = [
                 "embeddings",
@@ -67,11 +71,10 @@ def run_analysis(mode: str, steps=None, save=True, seed=42):
                 "viz",
                 "export",
             ]
-
         else:
             raise ValueError(f"Unknown mode: {mode}")
 
     pipeline = build_pipeline(pipeline_steps)
-    engine = AnalysisEngine(pipeline)
+    engine   = AnalysisEngine(pipeline)
 
     return engine.run(context)
