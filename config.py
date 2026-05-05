@@ -243,6 +243,31 @@ def push_from_p_level(p_level: int) -> float:
 # HELPERS
 # =========================================================
 
+_CURRENT_RUN_FILE = BASE_DIR / ".current_run"
+
+def new_run() -> Path:
+    """Crée un nouveau run et l'enregistre comme run courant."""
+    path = ANALYSIS_DIR / f"run_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    path.mkdir(parents=True, exist_ok=True)
+    _CURRENT_RUN_FILE.write_text(str(path))
+    print(f"[run] new run → {path}")
+    return path
+
+def get_current_run() -> Path:
+    """Retourne le run courant (erreur claire si pas initialisé)."""
+    if not _CURRENT_RUN_FILE.exists():
+        raise RuntimeError(
+            "Aucun run courant — lance d'abord : make new-run"
+        )
+    path = Path(_CURRENT_RUN_FILE.read_text().strip())
+    if not path.exists():
+        raise RuntimeError(
+            f"Run introuvable : {path}\n"
+            "Lance : make new-run"
+        )
+    return path
+
+
 def ensure_data_dirs() -> None:
     for d in [DATA_DIR, MIDI_DIR, WAV_DIR, MP3_DIR, ANALYSIS_DIR]:
         d.mkdir(parents=True, exist_ok=True)
@@ -251,6 +276,13 @@ def get_run_dir() -> Path:
     path = ANALYSIS_DIR / f"run_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
     path.mkdir(parents=True, exist_ok=True)
     return path
+
+def get_latest_run_dir() -> Path | None:
+    """Retourne le run le plus récent, ou None si aucun."""
+    if not ANALYSIS_DIR.exists():
+        return None
+    runs = sorted(ANALYSIS_DIR.glob("run_*"))
+    return runs[-1] if runs else None
 
 def print_config_summary() -> None:
     n_conditions = len(S_LEVELS) * len(D_LEVELS) * len(E_LEVELS) * len(P_LEVELS)

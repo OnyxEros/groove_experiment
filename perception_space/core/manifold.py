@@ -2,7 +2,13 @@ import numpy as np
 from sklearn.neighbors import NearestNeighbors
 
 def compute_local_geometry(X, y, k=15):
-
+    
+    # Adapte k au nombre de samples disponibles
+    k = min(k, len(X) - 1)
+    
+    if k < 2:
+        raise ValueError(f"Pas assez de samples ({len(X)}) pour calculer la géométrie locale.")
+    
     nn = NearestNeighbors(n_neighbors=k)
     nn.fit(X)
 

@@ -329,6 +329,24 @@ function seekTo(event) {
     audio.currentTime = pct * audio.duration;
 }
 
+/* ── Consentement ────────────────────────────────────────────────── */
+
+function onConsentChange() {
+    const checked = document.getElementById('consent-check').checked;
+    const btn = document.getElementById('consent-btn');
+
+    if (btn) {
+        btn.disabled = !checked;
+    }
+}
+
+function goIntro() {
+    document.getElementById('screen-consent').style.display = 'none';
+    document.getElementById('screen-intro').style.display = 'block';
+}
+
+
+
 /* ── Send ────────────────────────────────────────────────── */
 async function send() {
     if (!canRespond || is_sending) return;
