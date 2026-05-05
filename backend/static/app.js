@@ -348,12 +348,23 @@ async function send() {
 
     const payload = {
         participant_id: participant_id,
-        stim_id:        s.stim_id || s.audio_file || String(idx),
-        groove:         Number(document.getElementById('g').value),
-        complexity:     Number(document.getElementById('c').value),
-        rt:             parseFloat(rt.toFixed(3)),
-    };
 
+        stim_id: s.stim_id || s.audio_file || String(idx),
+
+        groove: Number(document.getElementById('g').value),
+        complexity: Number(document.getElementById('c').value),
+
+        rt: parseFloat(rt.toFixed(3)),
+        rt_type: "response",
+
+        trial_index: idx,
+
+        session_id: participant_id, // simple et suffisant
+
+        condition: "main", // adapte si tu as plusieurs conditions
+
+        timestamp_client: Date.now()
+    };
     try {
         const res = await fetch('/response', {
             method:  'POST',
