@@ -19,7 +19,7 @@ async function init() {
         const p = await fetch('/new_participant').then(r => r.json());
         participant_id = p.participant_id;
 
-        stimuli = await fetch('/stimuli?n=20').then(r => r.json());
+        stimuli = await fetch('/stimuli?n=30').then(r => r.json());
         shuffle(stimuli);
 
         if (stimuli.length > 0) preloadOne(stimuli[0]);
@@ -30,10 +30,66 @@ async function init() {
     }
 }
 
+async function loadExample() {
+    try {
+        const ex = await fetch('/example').then(r => r.json());
+        const audio = document.getElementById('ex-audio');
+        audio.src = ex.audio_url;
+
+        document.getElementById('example-container').innerHTML = `
+            <div class="player waiting" id="ex-player">
+                <button class="play-btn" id="ex-play-btn"
+                        onclick="toggleExPlay()" aria-label="Lecture exemple">▶</button>
+                <div class="player-info">
+                    <div class="player-meta">
+                        <span class="player-title">Exemple groove fort</span>
+                        <span class="player-time" id="ex-time">--:--</span>
+                    </div>
+                    <div class="player-bar-track">
+                        <div class="player-bar-fill" id="ex-fill"></div>
+                    </div>
+                    <div class="waveform">${buildWaveform()}</div>
+                </div>
+            </div>`;
+
+        audio.addEventListener('timeupdate', () => {
+            if (!audio.duration) return;
+            document.getElementById('ex-fill').style.width =
+                (audio.currentTime / audio.duration * 100) + '%';
+            document.getElementById('ex-time').textContent =
+                formatTime(audio.currentTime);
+        });
+        audio.addEventListener('canplaythrough', () => {
+            document.getElementById('ex-player')?.classList.remove('waiting');
+        });
+    } catch(e) {
+        document.getElementById('example-container').innerHTML =
+            '<div class="example-loading">Exemple non disponible</div>';
+    }
+}
+
+function toggleExPlay() {
+    const audio   = document.getElementById('ex-audio');
+    const btn     = document.getElementById('ex-play-btn');
+    const player  = document.getElementById('ex-player');
+    const hint    = document.getElementById('ex-hint');
+    if (!audio) return;
+    if (audio.paused) {
+        audio.play().then(() => {
+            player?.classList.add('playing');
+            btn.textContent = '⏸'; btn.classList.add('playing');
+            hint?.classList.remove('visible');
+        }).catch(console.error);
+    } else {
+        audio.pause();
+        player?.classList.remove('playing');
+        btn.textContent = '▶'; btn.classList.remove('playing');
+    }
+}
+
 /* ── Navigation intro / calibration ────────────────────── */
 function goCalibration() {
     showScreen('screen-calib');
-    // Initialise le fill des sliders de calibration
     syncSlider(document.getElementById('cg'), 'cg-val');
     syncSlider(document.getElementById('cc'), 'cc-val');
 }
@@ -59,7 +115,6 @@ function showScreen(id) {
     if (target) {
         target.style.display = 'block';
         target.classList.add('screen');
-        // Re-trigger animation
         void target.offsetWidth;
     }
 }
@@ -71,10 +126,8 @@ function syncSlider(input, pillId) {
     const val  = Number(input.value);
     const pct  = ((val - min) / (max - min)) * 100;
 
-    // Filled track via CSS custom property
     input.style.setProperty('--fill', pct + '%');
 
-    // Pill value
     const pill = document.getElementById(pillId);
     if (pill) pill.textContent = val;
 }
@@ -101,7 +154,6 @@ function render() {
 
     mountPlayer(s.audio_url);
 
-    // Init slider fills
     ['g', 'c'].forEach(id => {
         const el = document.getElementById(id);
         if (el) syncSlider(el, id === 'g' ? 'gv' : 'cv');
@@ -112,7 +164,6 @@ function render() {
 function buildTrialHTML(s, i) {
     return `
     <div class="screen">
-        <!-- Player -->
         <div class="player waiting" id="player">
             <button class="play-btn" id="play-btn" onclick="togglePlay()" aria-label="Lecture / Pause">
                 ▶
@@ -137,7 +188,6 @@ function buildTrialHTML(s, i) {
             <source src="${escHtml(s.audio_url)}" type="audio/mpeg">
         </audio>
 
-        <!-- Sliders -->
         <div class="slider-block">
             <div class="slider-header">
                 <span class="slider-label">Groove</span>
@@ -187,10 +237,8 @@ function mountPlayer(url) {
     audio.addEventListener('error',          onAudioError);
 
     audio.play().catch(() => {
-        // Autoplay bloqué → affiche hint
         const hint = document.getElementById('autoplay-hint');
         if (hint) hint.classList.add('visible');
-
         const player = document.getElementById('player');
         if (player) player.classList.add('waiting');
     });
@@ -256,7 +304,6 @@ function togglePlay() {
             if (playBtn) { playBtn.textContent = '⏸'; playBtn.classList.add('playing'); }
             if (hint)    hint.classList.remove('visible');
 
-            // Active le bouton si l'utilisateur a joué manuellement
             if (!canRespond) {
                 start_time = Date.now();
                 setTimeout(() => {
@@ -273,7 +320,6 @@ function togglePlay() {
     }
 }
 
-/* Seek en cliquant sur la barre de progression */
 function seekTo(event) {
     const audio = currentAudio;
     if (!audio || !audio.duration) return;
@@ -294,7 +340,6 @@ async function send() {
 
     if (btn) { btn.disabled = true; btn.textContent = 'Envoi…'; }
 
-    // Stop audio
     if (currentAudio) {
         currentAudio.pause();
         currentAudio.src = '';
