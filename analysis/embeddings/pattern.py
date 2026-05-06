@@ -20,6 +20,7 @@ class PatternEmbedding(BaseEmbedding):
 
             vec = np.concatenate([
                 stim["kick"],
+                stim["bass"],
                 stim["snare"],
                 stim["hihat"],
             ])

@@ -1,6 +1,0 @@
-id,participant_id,stim_id,groove,complexity,rt,rt_type,trial_index,session_id,condition,created_at,listen_duration
-8a8d3ca1-f1e7-4f79-9bb7-34987f52e7f8,027cca77,stim_0087,4,4,11.452,response,0,027cca77,main,2026-05-06T13:33:51.751546+00:00,
-2d7ee564-f0a6-480b-b68f-f2994cf5d5b3,027cca77,stim_0034,3,4,11.664,response,1,027cca77,main,2026-05-06T13:34:07.092725+00:00,
-3139fed9-d0e7-4f7c-8067-214e691698bb,027cca77,stim_0060,5,2,7.815,response,2,027cca77,main,2026-05-06T13:34:16.040141+00:00,
-4a1d158a-d211-42d8-a2ca-57df78919a7a,027cca77,stim_0093,3,4,24.88,response,3,027cca77,main,2026-05-06T13:34:41.663365+00:00,
-6d0a2b30-be88-4ac2-bd07-71ba1b3c5c32,027cca77,stim_0049,3,1,8.359,response,4,027cca77,main,2026-05-06T13:34:50.927406+00:00,
