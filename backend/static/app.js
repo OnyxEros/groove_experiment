@@ -9,10 +9,16 @@ let canRespond = false;
 let is_sending = false;
 let currentAudio = null;
 let listenedEnough = false;
+let listenInterval = null;
 
 /* ───────────────── INIT ───────────────── */
+document.addEventListener('DOMContentLoaded', init);
+
 async function init() {
     try {
+        showScreen('screen-consent');
+        bindConsent();
+
         const p = await fetch('/new_participant').then(r => r.json());
         participant_id = p.participant_id;
 
@@ -27,31 +33,38 @@ async function init() {
     }
 }
 
-/* ───────────────── SCREEN CONTROL (FIXED) ───────────────── */
-function showScreen(id) {
-    document.querySelectorAll('.screen').forEach(el => {
-        el.classList.remove('active');
+/* ───────────────── CONSENT ───────────────── */
+function bindConsent() {
+    const checkbox = document.getElementById('consent-check');
+    const btn = document.getElementById('consent-btn');
+
+    if (!checkbox || !btn) return;
+
+    checkbox.addEventListener('change', () => {
+        btn.disabled = !checkbox.checked;
     });
+}
+
+/* ───────────────── SCREEN CONTROL ───────────────── */
+function showScreen(id) {
+    document.querySelectorAll('.screen').forEach(el => el.classList.remove('active'));
 
     const target = document.getElementById(id);
     if (target) target.classList.add('active');
 
-    // progress bar uniquement sur task
     const progressWrap = document.getElementById('progress-wrap');
     if (progressWrap) {
         progressWrap.style.display = (id === 'screen-task') ? 'block' : 'none';
     }
 }
 
-/* ───────────────── INTRO FLOW ───────────────── */
+/* ───────────────── FLOW ───────────────── */
+function goIntro() { showScreen('screen-intro'); }
+
 function goCalibration() {
     showScreen('screen-calib');
     syncSlider(document.getElementById('cg'), 'cg-val');
     syncSlider(document.getElementById('cc'), 'cc-val');
-}
-
-function goIntro() {
-    showScreen('screen-intro');
 }
 
 function startExperiment() {
@@ -59,90 +72,65 @@ function startExperiment() {
     render();
 }
 
-/* ───────────────── SLIDERS ───────────────── */
-function syncSlider(input, pillId) {
-    if (!input) return;
-
-    const min = Number(input.min);
-    const max = Number(input.max);
-    const val = Number(input.value);
-
-    const pct = ((val - min) / (max - min)) * 100;
-    input.style.setProperty('--fill', pct + '%');
-
-    const pill = document.getElementById(pillId);
-    if (pill) pill.textContent = val;
-}
-
-/* ───────────────── RENDER TRIAL ───────────────── */
+/* ───────────────── RENDER ───────────────── */
 function render() {
-    if (idx >= stimuli.length) {
-        showThanks();
-        return;
-    }
+    if (idx >= stimuli.length) return showThanks();
 
     listenedEnough = false;
     canRespond = false;
 
     const s = stimuli[idx];
-    const pct = Math.round((idx / stimuli.length) * 100);
-
-    const p1 = document.getElementById('progress');
-    const l1 = document.getElementById('counter-left');
-    const r1 = document.getElementById('counter-right');
-
-    if (p1) p1.style.width = pct + '%';
-    if (l1) l1.textContent = `Extrait ${idx + 1} / ${stimuli.length}`;
-    if (r1) r1.textContent = pct + '%';
-
-    if (idx + 1 < stimuli.length) preloadOne(stimuli[idx + 1]);
 
     const content = document.getElementById('content');
-    if (content) content.innerHTML = buildTrialHTML(s, idx);
+    if (content) content.innerHTML = buildTrialHTML(s);
 
-    mountPlayer(s.audio_url);
+    mountPlayer();
 }
 
-/* ───────────────── PLAYER ───────────────── */
+/* ───────────────── AUDIO ───────────────── */
 function mountPlayer() {
     const audio = document.getElementById('audio');
+    const btn = document.getElementById('btn');
+
     if (!audio) return;
 
     currentAudio = audio;
 
-    audio.addEventListener('canplaythrough', onCanPlay, { once: true });
-    audio.addEventListener('timeupdate', onTimeUpdate);
-    audio.addEventListener('ended', onEnded);
-    audio.addEventListener('error', onAudioError);
+    audio.onplay = () => {
+        start_time = Date.now();
+    };
 
-    audio.play().catch(() => {
-        const hint = document.getElementById('autoplay-hint');
-        if (hint) hint.classList.add('visible');
-    });
-}
-
-function onCanPlay() {
-    start_time = Date.now();
-}
-
-/* ───────────────── AUDIO CHECK ───────────────── */
-setInterval(() => {
-    const a = currentAudio;
-    if (!a || a.paused || !a.duration) return;
-
-    const ok = (a.currentTime / a.duration >= 0.2) || (a.currentTime >= 3);
-
-    if (ok && !listenedEnough) {
-        listenedEnough = true;
+    audio.onerror = () => {
+        console.error('Audio error');
+        btn.textContent = 'Erreur audio → continuer';
+        btn.disabled = false;
         canRespond = true;
+    };
 
-        const btn = document.getElementById('btn');
-        if (btn) {
+    // interval sécurisé
+    listenInterval = setInterval(() => {
+        if (!audio.duration) return;
+
+        const ok = (audio.currentTime / audio.duration >= 0.2) || (audio.currentTime >= 3);
+
+        if (ok && !listenedEnough) {
+            listenedEnough = true;
+            canRespond = true;
+
             btn.disabled = false;
             btn.textContent = 'Continuer →';
         }
-    }
-}, 400);
+    }, 300);
+
+    // fallback bouton play
+    btn.onclick = () => {
+        if (audio.paused) {
+            audio.play();
+        } else if (canRespond) {
+            send();
+        }
+    };
+}
 
 /* ───────────────── SEND ───────────────── */
 async function send() {
@@ -151,14 +139,11 @@ async function send() {
     is_sending = true;
 
     const s = stimuli[idx];
-    const rt = (Date.now() - start_time) / 1000;
 
     const payload = {
         participant_id,
         stim_id: s.stim_id || String(idx),
-        groove: Number(document.getElementById('g')?.value),
-        complexity: Number(document.getElementById('c')?.value),
-        rt,
+        rt: (Date.now() - start_time) / 1000,
         trial_index: idx,
         timestamp_client: Date.now()
     };
@@ -170,19 +155,20 @@ async function send() {
             body: JSON.stringify(payload)
         });
     } catch (e) {
-        console.error(e);
-        is_sending = false;
-        return;
+        console.error('Send error:', e);
     }
+
+    clearInterval(listenInterval);
 
     idx++;
 
-    document.getElementById('content').innerHTML = `<div class="fixation">+</div>`;
+    const content = document.getElementById('content');
+    if (content) content.innerHTML = `<div class="fixation">+</div>`;
 
     setTimeout(() => {
         is_sending = false;
         render();
-    }, 500);
+    }, 400);
 }
 
 /* ───────────────── HELPERS ───────────────── */
@@ -199,15 +185,18 @@ function preloadOne(s) {
     a.src = s.audio_url;
 }
 
+function buildTrialHTML(s) {
+    return `
+        <audio id="audio" src="${s.audio_url}" preload="auto"></audio>
+        <button id="btn" class="btn">▶ Lancer l'écoute</button>
+    `;
+}
+
 function showError(msg) {
-    document.getElementById('app').innerHTML =
-        `<div class="card" style="text-align:center">${msg}</div>`;
+    document.getElementById('app').innerHTML = `<div class="card">${msg}</div>`;
 }
 
 function showThanks() {
-    document.getElementById('screen-task').innerHTML =
-        `<div class="thanks">Merci 🙏</div>`;
+    const t = document.getElementById('screen-task');
+    if (t) t.innerHTML = `<div class="thanks">Merci 🙏</div>`;
 }
-
-/* ───────────────── BOOT ───────────────── */
-init();
