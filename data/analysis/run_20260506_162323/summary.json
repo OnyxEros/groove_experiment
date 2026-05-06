@@ -1,0 +1,7 @@
+{
+  "n_samples": 128,
+  "has_embeddings": true,
+  "has_clusters": true,
+  "has_interpretation": true,
+  "has_stim_id_map": true
+}
