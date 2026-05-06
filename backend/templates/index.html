@@ -1,59 +1,610 @@
-<!DOCTYPE html PUBLIC "-//W3C//DTD HTML 4.01//EN" "http://www.w3.org/TR/html4/strict.dtd">
-<html>
+<!DOCTYPE html>
+<html lang="fr">
 <head>
-  <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
-  <meta http-equiv="Content-Style-Type" content="text/css">
-  <title></title>
-  <meta name="Generator" content="Cocoa HTML Writer">
-  <meta name="CocoaVersion" content="2113.65">
-  <style type="text/css">
-    body {background-color: #070809}
-    p.p1 {margin: 0.0px 0.0px 0.0px 0.0px; line-height: 21.5px; font: 13.0px Helvetica; color: #e7e8f2; -webkit-text-stroke: #e7e8f2}
-    p.p2 {margin: 0.0px 0.0px 0.0px 0.0px; line-height: 21.5px; font: 13.0px Menlo; color: #e7e8f2; -webkit-text-stroke: #e7e8f2; background-color: #1ee38f; min-height: 15.0px}
-    p.p3 {margin: 0.0px 0.0px 0.0px 0.0px; line-height: 15.7px; font: 9.5px Menlo; color: #e7e8f2; color: rgba(231, 232, 242, 0.16); -webkit-text-stroke: rgba(231, 232, 242, 0.16)}
-    p.p4 {margin: 0.0px 0.0px 0.0px 0.0px; line-height: 14.9px; font: 9.0px Menlo; color: #3138ff; -webkit-text-stroke: #3138ff; background-color: #3138ff; min-height: 10.0px}
-    p.p5 {margin: 0.0px 0.0px 0.0px 0.0px; line-height: 14.9px; font: 9.0px Menlo; color: #3138ff; -webkit-text-stroke: #3138ff; background-color: #3138ff; background-color: rgba(49, 56, 255, 0.1)}
-    p.p7 {margin: 0.0px 0.0px 0.0px 0.0px; line-height: 19.0px; font: 19.0px 'Apple Color Emoji'; color: #e7e8f2; -webkit-text-stroke: #e7e8f2}
-    p.p8 {margin: 0.0px 0.0px 0.0px 0.0px; line-height: 13.2px; font: 8.0px Menlo; color: #1ee38f; -webkit-text-stroke: #1ee38f}
-    p.p9 {margin: 0.0px 0.0px 0.0px 0.0px; line-height: 20.4px; font: 12.0px Menlo; color: #e7e8f2; color: rgba(231, 232, 242, 0.42); -webkit-text-stroke: rgba(231, 232, 242, 0.42)}
-    p.p10 {margin: 0.0px 0.0px 0.0px 0.0px; line-height: 21.5px; font: 13.0px Menlo; color: #ffffff; -webkit-text-stroke: #ffffff; min-height: 15.0px}
-    p.p11 {margin: 0.0px 0.0px 0.0px 0.0px; line-height: 20.6px; font: 12.5px Menlo; color: #e7e8f2; -webkit-text-stroke: #e7e8f2}
-    p.p12 {margin: 0.0px 0.0px 0.0px 0.0px; text-align: center; line-height: 21.5px; font: 14.0px Helvetica; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #3138ff}
-    p.p13 {margin: 0.0px 0.0px 0.0px 0.0px; text-align: center; line-height: 16.5px; font: 10.0px Menlo; color: #e7e8f2; color: rgba(231, 232, 242, 0.16); -webkit-text-stroke: rgba(231, 232, 242, 0.16)}
-    span.s1 {font-kerning: none; background-color: #070809}
-    span.s2 {font-kerning: none; color: #3138ff; background-color: #070809; -webkit-text-stroke: 0px #3138ff}
-    span.s3 {font-kerning: none}
-    span.s4 {font-kerning: none; background-color: #070809; -webkit-text-stroke: 0px #e7e8f2}
-    span.s5 {font-kerning: none; -webkit-text-stroke: 0px #e7e8f2}
-    span.s6 {font-kerning: none; color: rgba(0, 0, 0, 0); background-color: #070809}
-    span.s7 {font-kerning: none; background-color: #0b0b0d}
-    span.s8 {font-kerning: none; color: #e7e8f2; background-color: #0b0b0d; -webkit-text-stroke: 0px #e7e8f2}
-    span.s9 {font: 14.0px 'Lucida Grande'; font-kerning: none}
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>GrooveStudy</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=DM+Mono:ital,wght@0,300;0,400;0,500;1,400&family=DM+Sans:wght@300;400;500;600&display=swap');
+
+    :root {
+      --bg:       #070809;
+      --surface:  #0d0f11;
+      --border:   rgba(255,255,255,0.07);
+      --accent:   #3138ff;
+      --accent2:  #1ee38f;
+      --text:     #e7e8f2;
+      --muted:    rgba(231,232,242,0.38);
+      --danger:   #ff4d4d;
+      --radius:   12px;
+    }
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    html, body {
+      height: 100%;
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'DM Sans', sans-serif;
+      font-size: 15px;
+      line-height: 1.6;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    #app {
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: flex-start;
+      padding: 0 16px 40px;
+    }
+
+    /* ── TOPBAR ─────────────────────────────────────── */
+    .topbar {
+      width: 100%;
+      max-width: 640px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 20px 0 0;
+      margin-bottom: 32px;
+    }
+
+    .logo {
+      font-family: 'DM Mono', monospace;
+      font-size: 13px;
+      letter-spacing: 0.12em;
+      color: var(--text);
+    }
+    .logo span { color: var(--accent); }
+
+    .badge {
+      font-family: 'DM Mono', monospace;
+      font-size: 10px;
+      letter-spacing: 0.1em;
+      color: var(--accent2);
+      background: rgba(30,227,143,0.08);
+      border: 1px solid rgba(30,227,143,0.2);
+      padding: 3px 10px;
+      border-radius: 100px;
+    }
+
+    /* ── CARD ───────────────────────────────────────── */
+    .card {
+      width: 100%;
+      max-width: 640px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 32px 28px;
+    }
+
+    /* ── PROGRESS ───────────────────────────────────── */
+    .progress-wrap {
+      width: 100%;
+      max-width: 640px;
+      margin-bottom: 16px;
+    }
+    .progress-meta {
+      display: flex;
+      justify-content: space-between;
+      font-family: 'DM Mono', monospace;
+      font-size: 11px;
+      color: var(--muted);
+      margin-bottom: 6px;
+    }
+    .progress-track {
+      height: 2px;
+      background: var(--border);
+      border-radius: 2px;
+      overflow: hidden;
+    }
+    #progress {
+      height: 100%;
+      background: var(--accent);
+      width: 0%;
+      transition: width 0.4s ease;
+    }
+
+    /* ── SCREENS ────────────────────────────────────── */
+    .screen { display: none; }
+    .screen.active { display: block; }
+
+    /* ── CONSENT ────────────────────────────────────── */
+    .section-tag {
+      font-family: 'DM Mono', monospace;
+      font-size: 10px;
+      letter-spacing: 0.14em;
+      color: var(--accent2);
+      text-transform: uppercase;
+      margin-bottom: 20px;
+    }
+
+    h1.hero {
+      font-size: clamp(28px, 6vw, 40px);
+      font-weight: 600;
+      line-height: 1.15;
+      margin-bottom: 32px;
+      letter-spacing: -0.02em;
+    }
+    h1.hero em {
+      font-style: normal;
+      color: var(--accent);
+    }
+
+    .info-blocks { display: flex; flex-direction: column; gap: 16px; margin-bottom: 28px; }
+
+    .info-block {
+      display: flex;
+      gap: 14px;
+      align-items: flex-start;
+      padding: 16px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: rgba(255,255,255,0.02);
+    }
+
+    .info-block-icon {
+      font-size: 18px;
+      flex-shrink: 0;
+      margin-top: 1px;
+    }
+
+    .info-block-body {}
+    .info-block-label {
+      font-family: 'DM Mono', monospace;
+      font-size: 10px;
+      letter-spacing: 0.12em;
+      color: var(--accent2);
+      margin-bottom: 4px;
+    }
+    .info-block-text {
+      font-size: 13px;
+      color: var(--muted);
+      line-height: 1.55;
+    }
+    .info-block-text strong { color: var(--text); font-weight: 500; }
+
+    .consent-line {
+      font-size: 13px;
+      color: var(--muted);
+      margin-bottom: 20px;
+      line-height: 1.55;
+    }
+
+    .consent-check-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 20px;
+      cursor: pointer;
+    }
+    .consent-check-row input[type="checkbox"] {
+      width: 18px; height: 18px;
+      accent-color: var(--accent);
+      cursor: pointer;
+      flex-shrink: 0;
+    }
+    .consent-check-row label {
+      font-size: 13px;
+      color: var(--text);
+      cursor: pointer;
+    }
+
+    /* ── BUTTONS ────────────────────────────────────── */
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      width: 100%;
+      padding: 15px 24px;
+      background: var(--accent);
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      font-family: 'DM Sans', sans-serif;
+      font-size: 15px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: opacity 0.15s, transform 0.1s;
+      letter-spacing: 0.01em;
+    }
+    .btn:hover:not(:disabled) { opacity: 0.88; transform: translateY(-1px); }
+    .btn:active:not(:disabled) { transform: translateY(0); }
+    .btn:disabled { opacity: 0.35; cursor: not-allowed; }
+    .btn.secondary {
+      background: transparent;
+      border: 1px solid var(--border);
+      color: var(--text);
+    }
+    .btn.secondary:hover:not(:disabled) { background: rgba(255,255,255,0.04); opacity: 1; }
+
+    /* ── INTRO ──────────────────────────────────────── */
+    h2.section-title {
+      font-size: 22px;
+      font-weight: 600;
+      margin-bottom: 8px;
+      letter-spacing: -0.01em;
+    }
+    .section-sub {
+      font-size: 14px;
+      color: var(--muted);
+      margin-bottom: 28px;
+      line-height: 1.55;
+    }
+
+    .example-wrap {
+      margin-bottom: 28px;
+    }
+    .example-label {
+      font-family: 'DM Mono', monospace;
+      font-size: 10px;
+      letter-spacing: 0.12em;
+      color: var(--muted);
+      margin-bottom: 10px;
+    }
+    #example-container {
+      min-height: 72px;
+      display: flex;
+      align-items: center;
+    }
+    .example-loading {
+      font-size: 13px;
+      color: var(--muted);
+      font-family: 'DM Mono', monospace;
+    }
+
+    /* ── PLAYER ─────────────────────────────────────── */
+    .player {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      padding: 14px 16px;
+      background: rgba(255,255,255,0.03);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      width: 100%;
+      transition: border-color 0.2s;
+    }
+    .player.playing { border-color: rgba(49,56,255,0.4); }
+    .player.waiting { opacity: 0.6; }
+
+    .play-btn {
+      width: 42px; height: 42px;
+      border-radius: 50%;
+      border: none;
+      background: var(--accent);
+      color: #fff;
+      font-size: 14px;
+      cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+      flex-shrink: 0;
+      transition: transform 0.15s, background 0.15s;
+    }
+    .play-btn:hover { transform: scale(1.08); }
+    .play-btn.playing { background: var(--accent2); }
+
+    .player-info { flex: 1; min-width: 0; }
+    .player-meta {
+      display: flex;
+      justify-content: space-between;
+      margin-bottom: 6px;
+    }
+    .player-title { font-size: 13px; font-weight: 500; }
+    .player-time {
+      font-family: 'DM Mono', monospace;
+      font-size: 11px;
+      color: var(--muted);
+    }
+
+    .player-bar-track {
+      height: 3px;
+      background: var(--border);
+      border-radius: 3px;
+      overflow: hidden;
+      margin-bottom: 8px;
+      cursor: pointer;
+    }
+    .player-bar-fill {
+      height: 100%;
+      background: var(--accent);
+      width: 0%;
+      transition: width 0.2s linear;
+    }
+
+    .waveform {
+      display: flex;
+      align-items: center;
+      gap: 2px;
+      height: 18px;
+    }
+    .waveform span {
+      display: block;
+      width: 3px;
+      border-radius: 2px;
+      background: rgba(49,56,255,0.35);
+      animation: wave 1.2s ease-in-out infinite alternate;
+      animation-delay: var(--d, 0s);
+      animation-play-state: paused;
+    }
+    .player.playing .waveform span { animation-play-state: running; }
+    @keyframes wave {
+      from { transform: scaleY(0.5); opacity: 0.4; }
+      to   { transform: scaleY(1.6); opacity: 1; }
+    }
+
+    .autoplay-hint {
+      font-size: 12px;
+      color: var(--muted);
+      margin-top: 8px;
+      font-family: 'DM Mono', monospace;
+      display: none;
+    }
+    .autoplay-hint.visible { display: block; }
+
+    /* ── CALIBRATION ────────────────────────────────── */
+    .calib-sliders { display: flex; flex-direction: column; gap: 24px; margin-bottom: 28px; }
+
+    /* ── SLIDERS (task) ─────────────────────────────── */
+    .slider-block { margin-bottom: 24px; }
+    .slider-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 6px;
+    }
+    .slider-label { font-size: 14px; font-weight: 500; }
+    .slider-pill {
+      font-family: 'DM Mono', monospace;
+      font-size: 13px;
+      background: rgba(49,56,255,0.15);
+      color: var(--accent);
+      padding: 2px 10px;
+      border-radius: 100px;
+      min-width: 36px;
+      text-align: center;
+    }
+    .slider-anchors {
+      display: flex;
+      justify-content: space-between;
+      font-size: 11px;
+      color: var(--muted);
+      margin-bottom: 8px;
+      font-family: 'DM Mono', monospace;
+    }
+
+    input[type="range"] {
+      -webkit-appearance: none;
+      width: 100%;
+      height: 4px;
+      border-radius: 4px;
+      background: linear-gradient(
+        to right,
+        var(--accent) 0%,
+        var(--accent) var(--fill, 50%),
+        rgba(255,255,255,0.1) var(--fill, 50%),
+        rgba(255,255,255,0.1) 100%
+      );
+      outline: none;
+      cursor: pointer;
+    }
+    input[type="range"]::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      width: 18px; height: 18px;
+      border-radius: 50%;
+      background: var(--accent);
+      border: 2px solid var(--bg);
+      cursor: pointer;
+      box-shadow: 0 0 0 3px rgba(49,56,255,0.2);
+      transition: box-shadow 0.15s;
+    }
+    input[type="range"]::-webkit-slider-thumb:hover {
+      box-shadow: 0 0 0 5px rgba(49,56,255,0.25);
+    }
+
+    /* ── DIVIDER ────────────────────────────────────── */
+    .divider {
+      height: 1px;
+      background: var(--border);
+      margin: 24px 0;
+    }
+
+    /* ── FIXATION ───────────────────────────────────── */
+    .fixation {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      height: 160px;
+      font-size: 32px;
+      color: var(--muted);
+      font-weight: 300;
+      letter-spacing: 0.1em;
+    }
+
+    /* ── THANKS ─────────────────────────────────────── */
+    .thanks {
+      text-align: center;
+      padding: 16px 0;
+    }
+    .thanks-icon { font-size: 40px; margin-bottom: 20px; }
+    .thanks h2 { font-size: 22px; margin-bottom: 10px; }
+    .thanks p { font-size: 14px; color: var(--muted); line-height: 1.6; }
+    .thanks-detail {
+      margin-top: 24px;
+      font-family: 'DM Mono', monospace;
+      font-size: 11px;
+      color: var(--muted);
+      padding: 10px 16px;
+      background: rgba(255,255,255,0.03);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      display: inline-block;
+    }
   </style>
 </head>
 <body>
-<p class="p1"><span class="s1"><b>GROOVE</b></span><span class="s2"><b>STUDY</b></span></p>
-<p class="p2"><span class="s3"></span><br></p>
-<p class="p3"><span class="s1">v2.0</span></p>
-<p class="p4"><span class="s3"></span><br></p>
-<p class="p5"><span class="s3">FORMULAIRE DE CONSENTEMENT</span></p>
-<h1 style="margin: 0.0px 0.0px 20.0px 0.0px; line-height: 44.2px; font: 48.0px Helvetica; color: #e7e8f2; -webkit-text-stroke: #3138ff"><span class="s4"><b>Avant</b></span><span class="s5"><b><br>
-</b></span><span class="s6"><b>de commencer</b></span></h1>
-<p class="p7"><span class="s7">🎓</span></p>
-<p class="p8"><span class="s7">ÉTUDE ACADÉMIQUE</span></p>
-<p class="p9"><span class="s7">Cette expérience fait partie d'un mémoire pour la TSMA2 portant sur la </span><span class="s8">perception du groove rythmique</span><span class="s7">. Elle est encadrée par </span><span class="s8">COUDERETTE Guillaume</span><span class="s7"> — </span><span class="s8">EMC</span><span class="s7">.<span class="Apple-converted-space"> </span></span></p>
-<p class="p7"><span class="s7">🎧</span></p>
-<p class="p8"><span class="s7">DÉROULEMENT</span></p>
-<p class="p9"><span class="s7">Tu vas écouter </span><span class="s8">30 extraits audio</span><span class="s7"> (rythmes de batterie) et évaluer deux dimensions pour chacun : le </span><span class="s8">groove</span><span class="s7"> (envie de bouger) et la </span><span class="s8">complexité</span><span class="s7"> perçue. Durée estimée : </span><span class="s8">10–15 minutes</span><span class="s7">.<span class="Apple-converted-space"> </span></span></p>
-<p class="p7"><span class="s7">🔒</span></p>
-<p class="p8"><span class="s7">DONNÉES COLLECTÉES</span></p>
-<p class="p9"><span class="s7">Tes réponses (notes 1–7, temps de réaction) sont enregistrées de façon </span><span class="s8">entièrement anonyme</span><span class="s7">. Aucune donnée personnelle identifiable n'est collectée. Les données sont utilisées uniquement à des fins de recherche académique.<span class="Apple-converted-space"> </span></span></p>
-<p class="p7"><span class="s7">✋</span></p>
-<p class="p8"><span class="s7">TES DROITS</span></p>
-<p class="p9"><span class="s7">Ta participation est </span><span class="s8">volontaire</span><span class="s7">. Tu peux arrêter à tout moment sans justification. Pour toute question : </span><span class="s8">[EMAIL_CONTACT]</span><span class="s7"><span class="Apple-converted-space"> </span></span></p>
-<p class="p10"><span class="s3"></span><br></p>
-<p class="p11"><span class="s1">J'ai lu et compris les informations ci-dessus. Je consens à participer à cette étude de manière volontaire.<span class="Apple-converted-space"> </span></span></p>
-<p class="p12"><span class="s3"><b>Participer </b></span><span class="s9"><b>→</b></span><span class="s3"><b><span class="Apple-converted-space"> </span></b></span></p>
-<p class="p13"><span class="s1">En cliquant sur "Participer", tu confirmes ton consentement éclairé.<span class="Apple-converted-space"> </span></span></p>
+<div id="app">
+
+  <div class="topbar">
+    <div class="logo">GROOVE<span>STUDY</span></div>
+    <div class="badge">v2.0 · EMC TSMA2</div>
+  </div>
+
+  <!-- PROGRESS (caché sur écrans non-task) -->
+  <div class="progress-wrap" id="progress-wrap" style="display:none">
+    <div class="progress-meta">
+      <span id="counter-left">Extrait 1 / 30</span>
+      <span id="counter-right">0%</span>
+    </div>
+    <div class="progress-track"><div id="progress"></div></div>
+  </div>
+
+  <!-- ══ ÉCRAN CONSENTEMENT ══ -->
+  <div id="screen-consent" class="card screen active">
+    <div class="section-tag">Formulaire de consentement</div>
+    <h1 class="hero">Avant<br>de <em>commencer</em></h1>
+
+    <div class="info-blocks">
+      <div class="info-block">
+        <div class="info-block-icon">🎓</div>
+        <div class="info-block-body">
+          <div class="info-block-label">Étude académique</div>
+          <div class="info-block-text">
+            Cette expérience fait partie d'un mémoire TSMA2 portant sur la
+            <strong>perception du groove rythmique</strong>.
+            Elle est encadrée par <strong>Couderette Guillaume — EMC</strong>.
+          </div>
+        </div>
+      </div>
+      <div class="info-block">
+        <div class="info-block-icon">🎧</div>
+        <div class="info-block-body">
+          <div class="info-block-label">Déroulement</div>
+          <div class="info-block-text">
+            Tu vas écouter <strong>30 extraits audio</strong> (rythmes de batterie)
+            et évaluer deux dimensions : le <strong>groove</strong> (envie de bouger)
+            et la <strong>complexité</strong> perçue.
+            Durée estimée : <strong>10–15 minutes</strong>.
+          </div>
+        </div>
+      </div>
+      <div class="info-block">
+        <div class="info-block-icon">🔒</div>
+        <div class="info-block-body">
+          <div class="info-block-label">Données collectées</div>
+          <div class="info-block-text">
+            Tes réponses (notes 1–7, temps de réaction) sont enregistrées de façon
+            <strong>entièrement anonyme</strong>. Aucune donnée personnelle identifiable
+            n'est collectée. Usage uniquement académique.
+          </div>
+        </div>
+      </div>
+      <div class="info-block">
+        <div class="info-block-icon">✋</div>
+        <div class="info-block-body">
+          <div class="info-block-label">Tes droits</div>
+          <div class="info-block-text">
+            Ta participation est <strong>volontaire</strong>. Tu peux arrêter à tout moment
+            sans justification. Pour toute question :
+            <strong>viken.karaboghossian@emc.fr</strong>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="consent-check-row">
+      <input type="checkbox" id="consent-check" onchange="onConsentChange()">
+      <label for="consent-check">
+        J'ai lu et compris les informations ci-dessus. Je consens à participer volontairement.
+      </label>
+    </div>
+
+    <button class="btn" id="consent-btn" onclick="goIntro()" disabled>
+      Participer →
+    </button>
+  </div>
+
+  <!-- ══ ÉCRAN INTRO ══ -->
+  <div id="screen-intro" class="card screen">
+    <div class="section-tag">Introduction</div>
+    <h2 class="section-title">Comment ça marche ?</h2>
+    <p class="section-sub">
+      Écoute chaque extrait, puis évalue le groove et la complexité sur une échelle de 1 à 7.
+      Le bouton « Continuer » se déverrouille après une écoute minimale.
+    </p>
+
+    <div class="example-wrap">
+      <div class="example-label">EXEMPLE — groove fort</div>
+      <div id="example-container">
+        <div class="example-loading">Chargement de l'exemple…</div>
+      </div>
+      <audio id="ex-audio" preload="auto"></audio>
+    </div>
+
+    <div class="divider"></div>
+
+    <button class="btn" onclick="goCalibration()">
+      Continuer →
+    </button>
+  </div>
+
+  <!-- ══ ÉCRAN CALIBRATION ══ -->
+  <div id="screen-calib" class="card screen">
+    <div class="section-tag">Calibration · Prise en main</div>
+    <h2 class="section-title">Essaie les curseurs</h2>
+    <p class="section-sub">
+      Familiarise-toi avec les deux échelles que tu utiliseras tout au long de l'expérience.
+    </p>
+
+    <div class="calib-sliders">
+      <div class="slider-block">
+        <div class="slider-header">
+          <span class="slider-label">Groove</span>
+          <span class="slider-pill" id="cg-val">4</span>
+        </div>
+        <div class="slider-anchors">
+          <span>Aucune envie de bouger</span>
+          <span>Forte envie de bouger</span>
+        </div>
+        <input type="range" id="cg" min="1" max="7" value="4"
+               oninput="syncSlider(this,'cg-val')">
+      </div>
+
+      <div class="slider-block">
+        <div class="slider-header">
+          <span class="slider-label">Complexité</span>
+          <span class="slider-pill" id="cc-val">4</span>
+        </div>
+        <div class="slider-anchors">
+          <span>Très simple</span>
+          <span>Très complexe</span>
+        </div>
+        <input type="range" id="cc" min="1" max="7" value="4"
+               oninput="syncSlider(this,'cc-val')">
+      </div>
+    </div>
+
+    <button class="btn" onclick="startExperiment()">
+      Commencer l'expérience →
+    </button>
+  </div>
+
+  <!-- ══ ÉCRAN TÂCHE ══ -->
+  <div id="screen-task" class="card screen">
+    <div id="content"></div>
+  </div>
+
+</div>
+
+<script src="/static/app.js"></script>
+<script>
+  // Affiche l'écran consent au chargement, charge l'exemple en avance
+  document.addEventListener('DOMContentLoaded', () => {
+    showScreen('screen-consent');
+    loadExample();
+  });
+</script>
 </body>
 </html>
