@@ -64,9 +64,9 @@ def fetch_ratings(refresh: bool = False) -> pd.DataFrame:
 # VALIDATION
 # =========================================================
 
-def _validate(df: pd.DataFrame) -> None:
+def _validate(df):
     """
-    Vérifie les colonnes minimales et nettoie les types.
+    Vérifie les colonnes minimales, nettoie les types, filtre les RT aberrants.
     Modifie le DataFrame en place.
     """
     required = {"stim_id", "groove"}
@@ -76,17 +76,36 @@ def _validate(df: pd.DataFrame) -> None:
             f"Colonnes manquantes dans les réponses : {missing}\n"
             f"Colonnes présentes : {list(df.columns)}"
         )
-
+ 
     # Nettoyage types
     df.dropna(subset=["stim_id", "groove"], inplace=True)
     df["stim_id"] = df["stim_id"].astype(str)
     df["groove"]  = pd.to_numeric(df["groove"],  errors="coerce")
-
+ 
     if "complexity" in df.columns:
         df["complexity"] = pd.to_numeric(df["complexity"], errors="coerce")
-
+ 
     if "rt" in df.columns:
         df["rt"] = pd.to_numeric(df["rt"], errors="coerce")
-
+ 
     # Drop les lignes où groove est NaN après coercion
     df.dropna(subset=["groove"], inplace=True)
+ 
+    # ── Filtre RT ──────────────────────────────────────────
+    # Importé ici pour éviter la dépendance circulaire
+    # (supabase_io ← regression n'est pas un import normal)
+    RT_MIN_S = 4.0
+    RT_MAX_S = 600.0
+ 
+    if "rt" in df.columns:
+        before = len(df)
+        df.drop(
+            index=df[
+                df["rt"].notna() &
+                ~df["rt"].between(RT_MIN_S, RT_MAX_S, inclusive="both")
+            ].index,
+            inplace=True,
+        )
+        n_dropped = before - len(df)
+        if n_dropped > 0:
+            print(f"[supabase_io] {n_dropped} réponses filtrées (RT hors [{RT_MIN_S}s–{RT_MAX_S}s])")

@@ -588,8 +588,9 @@ def cmd_perception_space(refresh: bool = False, dry_run: bool = False) -> None:
             "complexity_mean": "complexity",
         })
 
-        # stimulus_id doit être un entier (index dans les embeddings)
-        df["stimulus_id"] = df["stimulus_id"].str.replace("stim_", "").astype(int)
+        # ── NE PAS caster en int — run_perception_space gère
+        # la normalisation du format stim_id (str "stim_0042" ou "42")
+        df["stimulus_id"] = df["stimulus_id"].astype(str)
 
         # groove requis — on droppe si absent
         df = df.dropna(subset=["groove"])
@@ -602,7 +603,6 @@ def cmd_perception_space(refresh: bool = False, dry_run: bool = False) -> None:
         run_perception_space(perception_data=df)
 
     _print("✔  Perception space computed")
-
 
 # =========================================================
 # DOCTOR  (diagnostic complet)
