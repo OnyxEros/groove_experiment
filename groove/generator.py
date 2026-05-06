@@ -70,6 +70,26 @@ class Voices:
             p[o + bar // 2] = 1.0
         return p
 
+    def bass(self) -> np.ndarray:
+        """
+        Ligne de basse déterministe, verrouillée sur le kick.
+        Joue sur les temps 1 et 3 — root note, ancrage métrique pur.
+        Identique au kick : aucune variabilité entre conditions.
+        """
+        pattern = self.kick()
+        chords = [0, 9, 5, 7]  # I VI IV V
+        pitch  = np.zeros(self.total_steps)
+
+        segment_length = self.steps_per_bar // 2
+
+        for b in range(self.total_steps // segment_length):
+            chord = chords[b % len(chords)]
+            start = b * segment_length
+            end   = start + segment_length
+            pitch[start:end] = config.BASS_PITCH + chord
+
+        return pattern, pitch
+
     def snare(self) -> np.ndarray:
         p, bar = self._empty(), self.steps_per_bar
         for b in range(self.total_steps // bar):
@@ -212,6 +232,7 @@ class Stimulus:
         hihat_push_s = config.push_from_p_level(P_level) * self.micro.step_duration
 
         kick  = self.voices.kick()
+        bass, bass_pitch = self.voices.bass()
         snare = self.voices.snare()
         hihat = self.voices.hihat(
             sync_level=cfg["S_mv"],
@@ -223,6 +244,12 @@ class Stimulus:
             kick,
             amount=E * config.KICK_TIMING_SCALE,
             voice_weight=config.KICK_VOICE_WEIGHT,
+        )
+
+        bass_j = self.micro.apply(
+            bass,
+            amount=E * config.BASS_TIMING_SCALE,
+            voice_weight=config.BASS_VOICE_WEIGHT,
         )
         snare_j = self.micro.apply(
             snare,
@@ -241,9 +268,12 @@ class Stimulus:
 
         return {
             "kick":         kick,
+            "bass":         bass,
+            "bass_pitch":   bass_pitch,
             "snare":        snare,
             "hihat":        hihat,
             "kick_jitter":  kick_j,
+            "bass_jitter":  bass_j, 
             "snare_jitter": snare_j,
             "hihat_jitter": hihat_j,
             "hihat_push":   hihat_push_s,

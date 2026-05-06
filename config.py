@@ -110,6 +110,17 @@ HIHAT_DENSITY_PROBS: dict[int, float] = {
 HIHAT_PROB_MIN = 0.01
 HIHAT_PROB_MAX = 0.90
 
+
+# =========================================================
+# BASSE — LIGNE MÉLODIQUE (ancrage métrique, non expérimental)
+# =========================================================
+
+BASS_PITCH        = 36   # C2 en MIDI — root note générique, pitch de basse standard
+BASS_VELOCITY     = 85   # En dessous du kick (95) — présence sans domination
+BASS_TIMING_SCALE = 0.20 # Même pondération que le kick — verrouillée sur lui
+BASS_VOICE_WEIGHT = 0.20 # Même poids de timing que le kick
+
+
 # =========================================================
 # MICRO-TIMING — JITTER EXPRESSIF
 # =========================================================

@@ -23,6 +23,7 @@ import config
 
 DEFAULT_VELOCITY = {
     "kick":  95,
+    "bass":  85,
     "snare": 90,
     "hihat": 75,
 }
@@ -39,17 +40,19 @@ class MIDIExporter:
         self.step_duration = config.step_duration_seconds()
         self.map = {
             "kick":  36,
+            "bass":  33,
             "snare": 38,
             "hihat": 42,
         }
 
     def build_track(
         self,
-        pattern:  np.ndarray,
-        jitter:   np.ndarray,
-        pitch:    int,
-        vel:      np.ndarray | None = None,
-        default_vel: int = 90,
+        pattern:      np.ndarray,
+        jitter:       np.ndarray,
+        pitch:        int = None,
+        pitch_array:  np.ndarray = None,
+        vel:          np.ndarray | None = None,
+        default_vel:  int = 90,
     ) -> list[pretty_midi.Note]:
         """
         Args:
@@ -67,13 +70,13 @@ class MIDIExporter:
             if hit != 1.0:
                 continue
 
-            start    = max(0.0, i * self.step_duration + jitter[i])
-            end      = start + self.step_duration * 0.9
-            velocity = int(np.clip(vel[i], 1, 127)) if vel is not None else default_vel
-
+            start     = max(0.0, i * self.step_duration + jitter[i])
+            end       = start + self.step_duration * 0.9
+            velocity  = int(np.clip(vel[i], 1, 127)) if vel is not None else default_vel
+            pitch_val = int(pitch_array[i]) if pitch_array is not None else pitch
             notes.append(pretty_midi.Note(
                 velocity=velocity,
-                pitch=pitch,
+                pitch=pitch_val,
                 start=start,
                 end=end,
             ))
@@ -104,6 +107,17 @@ class MIDIExporter:
                 default_vel=DEFAULT_VELOCITY[name],
             )
             pm.instruments.append(inst)
+
+        # ── Basse (canal instrument, program 33 = Finger Bass) ─
+        bass_inst = pretty_midi.Instrument(program=33, is_drum=False)
+        bass_inst.notes = self.build_track(
+            stim["bass"],
+            stim["bass_jitter"],
+            pitch_array=stim["bass_pitch"],
+            vel=None,
+            default_vel=config.BASS_VELOCITY,
+        )
+        pm.instruments.append(bass_inst)
 
         pm.write(str(filename))
 
