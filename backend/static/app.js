@@ -9,90 +9,74 @@
    ============================================================ */
 
 'use strict';
-
-
+ 
 /* ══════════════════════════════════════════════════════════
    CONSTANTES
    ══════════════════════════════════════════════════════════ */
-
-const LISTEN_THRESHOLD  = 0.80;   // fraction de la durée pour débloquer
-const FIXATION_DELAY_MS = 550;    // pause inter-essais
-const MAX_STIMULI       = 30;     // cap de sécurité (le stratifié peut en produire moins)
-const POOL_SIZE         = 200;    // taille du pool à fetcher depuis l'API
-
+ 
+const FIXATION_DELAY_MS = 550;
+const MAX_STIMULI       = 30;
+const POOL_SIZE         = 200;
+ 
 const WAVEFORM_HEIGHTS = [3, 6, 9, 13, 9, 15, 9, 6, 11, 15, 9, 6, 11, 7, 4];
-
-
+ 
+ 
 /* ══════════════════════════════════════════════════════════
-   STATE (un seul objet mutable, jamais de globaux épars)
+   STATE
    ══════════════════════════════════════════════════════════ */
-
+ 
 const state = {
-  participantId: null,
-  stimuli:       [],
-  idx:           0,
-  startTime:     0,
-  isSending:     false,
-  player:        null,   // instance AudioPlayer courante
+  participantId:   null,
+  stimuli:         [],
+  idx:             0,
+  startTime:       0,
+  isSending:       false,
+  player:          null,
+  listenedSeconds: 0,   // ← durée d'écoute accumulée pour le trial courant
 };
-
-
+ 
+ 
 /* ══════════════════════════════════════════════════════════
    CLASSE AudioPlayer
-   Encapsule un élément <audio> et ses listeners.
-   destroy() retire tout proprement.
    ══════════════════════════════════════════════════════════ */
-
+ 
 class AudioPlayer {
-  /**
-   * @param {string}   src          URL de l'audio
-   * @param {Function} onReady      appelé quand l'audio peut jouer
-   * @param {Function} onProgress   appelé à chaque timeupdate (currentTime, duration)
-   * @param {Function} onEnded      appelé à la fin de la lecture
-   * @param {Function} onError      appelé en cas d'erreur
-   */
   constructor(src, { onReady, onProgress, onEnded, onError }) {
-    this._el       = document.createElement('audio');
+    this._el         = document.createElement('audio');
     this._el.preload = 'auto';
-
-    this._handlers = {};   // stocke les refs pour removeEventListener
-
-    this._bind('canplaythrough', () => onReady && onReady());
+    this._handlers   = {};
+ 
+    this._bind('canplaythrough', () => onReady   && onReady());
     this._bind('timeupdate',     () => onProgress && onProgress(this._el.currentTime, this._el.duration || 0));
-    this._bind('ended',          () => onEnded && onEnded());
-    this._bind('error',          () => onError && onError(this._el.error));
-
-    // Ajouter la source APRÈS les listeners (évite race condition Safari)
-    const source = document.createElement('source');
-    source.src  = escHtml(src);
-    source.type = 'audio/mpeg';
+    this._bind('ended',          () => onEnded    && onEnded());
+    this._bind('error',          () => onError    && onError(this._el.error));
+ 
+    const source  = document.createElement('source');
+    source.src    = escHtml(src);
+    source.type   = 'audio/mpeg';
     this._el.appendChild(source);
-
-    document.body.appendChild(this._el);   // nécessaire sur certains navigateurs
+ 
+    document.body.appendChild(this._el);
     this._el.load();
-
     this._destroyed = false;
   }
-
+ 
   _bind(event, handler) {
     this._handlers[event] = handler;
     this._el.addEventListener(event, handler);
   }
-
+ 
   play()  { return this._el.play();  }
   pause() { this._el.pause();        }
-
-  get paused()       { return this._el.paused;       }
-  get currentTime()  { return this._el.currentTime;  }
-  get duration()     { return this._el.duration || 0; }
-
+ 
+  get paused()      { return this._el.paused;       }
+  get currentTime() { return this._el.currentTime;  }
+  get duration()    { return this._el.duration || 0; }
+ 
   seek(fraction) {
-    if (this._el.duration) {
-      this._el.currentTime = fraction * this._el.duration;
-    }
+    if (this._el.duration) this._el.currentTime = fraction * this._el.duration;
   }
-
-  /** Retire tous les listeners et détache l'élément du DOM. */
+ 
   destroy() {
     if (this._destroyed) return;
     this._destroyed = true;
@@ -104,113 +88,88 @@ class AudioPlayer {
     if (this._el.parentNode) this._el.parentNode.removeChild(this._el);
   }
 }
-
-
+ 
+ 
 /* ══════════════════════════════════════════════════════════
    INIT
    ══════════════════════════════════════════════════════════ */
-
+ 
 async function init() {
   try {
-    const p = await fetch('/new_participant').then(r => r.json());
+    const p           = await fetch('/new_participant').then(r => r.json());
     state.participantId = p.participant_id;
-
+ 
     const pool    = await fetch(`/stimuli?n=${POOL_SIZE}`).then(r => r.json());
     state.stimuli = selectStratified(pool, MAX_STIMULI);
-
+ 
     if (state.stimuli.length > 0) preloadOne(state.stimuli[0]);
-
+ 
   } catch (e) {
     console.error('Init error:', e);
     showError('Erreur de chargement — recharge la page.');
   }
 }
-
-
+ 
+ 
 /* ══════════════════════════════════════════════════════════
    TIRAGE STRATIFIÉ S_mv × D_mv × E
-   ──────────────────────────────────────────────────────────
-   Pour chaque cellule du design factoriel, on tire AU HASARD
-   un stimulus parmi tous ceux disponibles dans cette cellule.
-
-   Pourquoi stratifié plutôt que maximin ?
-     - Garantit un effectif équilibré par condition (S_mv, D_mv, E)
-       → les Kruskal-Wallis et les stats par condition ont des groupes
-          de taille comparable, pas biaisés par la sélection
-     - Chaque participant voit une couverture uniforme du design space
-     - La variance inter-participants est réelle : deux sessions
-       consécutives ne voient pas exactement les mêmes stimuli
-     - Compatible avec l'ICC : tous les participants couvrent les
-       mêmes cellules, mais pas forcément le même stim dans chaque cellule
-
-   Fallback : si les métadonnées S_mv/D_mv/E sont absentes du pool,
-   on fait un shuffle + slice classique.
    ══════════════════════════════════════════════════════════ */
-
+ 
 function selectStratified(pool, n) {
   if (!pool?.length) return [];
-
-  // Fallback si les colonnes de design sont absentes
+ 
   if (!('S_mv' in pool[0])) {
     shuffle(pool);
     return pool.slice(0, n);
   }
-
-  // ── Groupement par cellule S_mv × D_mv × E ──────────────
+ 
   const cells = new Map();
-
   for (const stim of pool) {
     const key = `${stim.S_mv}_${stim.D_mv}_${stim.E}`;
     if (!cells.has(key)) cells.set(key, []);
     cells.get(key).push(stim);
   }
-
-  // ── Tirage aléatoire d'un stimulus par cellule ──────────
+ 
   const picked = [];
-
   for (const candidates of cells.values()) {
-    // Fisher-Yates sur les candidats de la cellule, on prend le premier
     const idx = Math.floor(Math.random() * candidates.length);
     picked.push(candidates[idx]);
   }
-
-  // ── Si trop peu de cellules, compléter avec des tirages aléatoires
-  //    parmi les stimuli non encore sélectionnés ─────────────
+ 
   if (picked.length < n) {
     const pickedIds = new Set(picked.map(s => s.stim_id ?? s.audio_file));
     const remaining = pool.filter(s => !pickedIds.has(s.stim_id ?? s.audio_file));
     shuffle(remaining);
     picked.push(...remaining.slice(0, n - picked.length));
   }
-
-  // ── Ordre aléatoire pour chaque session ─────────────────
+ 
   shuffle(picked);
   return picked.slice(0, n);
 }
-
-
+ 
+ 
 /* ══════════════════════════════════════════════════════════
    NAVIGATION
    ══════════════════════════════════════════════════════════ */
-
+ 
 function onConsentChange() {
   const cb  = document.getElementById('consent-check');
   const btn = document.getElementById('consent-btn');
   if (cb && btn) btn.disabled = !cb.checked;
 }
-
+ 
 function goIntro() {
   showScreen('screen-intro');
   loadExample();
 }
-
+ 
 function goCalibration() {
   stopExample();
   showScreen('screen-calib');
   syncSlider(document.getElementById('cg'), 'cg-val');
   syncSlider(document.getElementById('cc'), 'cc-val');
 }
-
+ 
 function startExperiment() {
   stopExample();
   const pw = document.getElementById('progress-wrap');
@@ -218,7 +177,7 @@ function startExperiment() {
   showScreen('screen-task');
   render();
 }
-
+ 
 function showScreen(id) {
   ['screen-consent', 'screen-intro', 'screen-calib', 'screen-task'].forEach(sid => {
     const el = document.getElementById(sid);
@@ -230,18 +189,18 @@ function showScreen(id) {
     void target.offsetWidth;
   }
 }
-
-
+ 
+ 
 /* ══════════════════════════════════════════════════════════
-   EXAMPLE PLAYER (screen-intro)
+   EXAMPLE PLAYER
    ══════════════════════════════════════════════════════════ */
-
+ 
 let _exPlayer = null;
-
+ 
 function loadExample() {
   const container = document.getElementById('example-container');
   if (!container) return;
-
+ 
   fetch('/example')
     .then(r => r.json())
     .then(s => {
@@ -259,7 +218,7 @@ function loadExample() {
             <div class="waveform">${buildWaveform()}</div>
           </div>
         </div>`;
-
+ 
       _exPlayer = new AudioPlayer(s.audio_url, {
         onProgress: (ct, dur) => {
           const fill = document.getElementById('ex-fill');
@@ -275,7 +234,7 @@ function loadExample() {
         '<div class="example-loading">Exemple non disponible.</div>';
     });
 }
-
+ 
 function toggleExample() {
   if (!_exPlayer) return;
   if (_exPlayer.paused) {
@@ -285,146 +244,131 @@ function toggleExample() {
     _setExPlayState(false);
   }
 }
-
+ 
 function _setExPlayState(playing) {
   const btn    = document.getElementById('ex-play-btn');
   const player = document.getElementById('ex-player');
   if (btn)    { btn.textContent = playing ? '⏸' : '▶'; btn.classList.toggle('playing', playing); }
   if (player) player.classList.toggle('playing', playing);
 }
-
+ 
 function stopExample() {
-  if (_exPlayer) {
-    _exPlayer.destroy();
-    _exPlayer = null;
-  }
+  if (_exPlayer) { _exPlayer.destroy(); _exPlayer = null; }
 }
-
-
+ 
+ 
 /* ══════════════════════════════════════════════════════════
    TRIAL RENDER
    ══════════════════════════════════════════════════════════ */
-
+ 
 function render() {
   if (state.idx >= state.stimuli.length) { showThanks(); return; }
-
-  // Détruire le player précédent proprement
-  if (state.player) {
-    state.player.destroy();
-    state.player = null;
-  }
-
+ 
+  if (state.player) { state.player.destroy(); state.player = null; }
+ 
+  // Réinitialise le compteur d'écoute pour ce trial
+  state.listenedSeconds = 0;
+ 
   const s   = state.stimuli[state.idx];
   const pct = Math.round((state.idx / state.stimuli.length) * 100);
-
+ 
   _updateProgress(pct, state.idx + 1, state.stimuli.length);
-
   if (state.idx + 1 < state.stimuli.length) preloadOne(state.stimuli[state.idx + 1]);
-
+ 
   const content = document.getElementById('content');
   if (content) content.innerHTML = buildTrialHTML(s, state.idx);
-
+ 
   syncSlider(document.getElementById('g'), 'gv');
   syncSlider(document.getElementById('c'), 'cv');
-
+ 
   _mountTrialPlayer(s.audio_url);
 }
-
+ 
 function _updateProgress(pct, current, total) {
   const progress = document.getElementById('progress');
   const left     = document.getElementById('counter-left');
   const right    = document.getElementById('counter-right');
   if (progress) progress.style.width = pct + '%';
-  if (left)     left.textContent  = `Extrait ${current} / ${total}`;
-  if (right)    right.textContent = pct + '%';
+  if (left)     left.textContent     = `Extrait ${current} / ${total}`;
+  if (right)    right.textContent    = pct + '%';
 }
-
+ 
 function _mountTrialPlayer(url) {
-  let listenedSeconds = 0;
-  let lastTime        = 0;
-  let unlocked        = false;
-
-  state.startTime = Date.now();
-
+  let lastTime = 0;
+ 
+  state.startTime       = Date.now();
+  state.listenedSeconds = 0;
+ 
   state.player = new AudioPlayer(url, {
-
+ 
     onReady: () => {
       const hint   = document.getElementById('autoplay-hint');
       const player = document.getElementById('player');
       const btn    = document.getElementById('play-btn');
+      const submit = document.getElementById('btn');
+ 
       if (hint)   hint.classList.remove('visible');
       if (player) { player.classList.remove('waiting'); player.classList.add('playing'); }
       if (btn)    { btn.textContent = '⏸'; btn.classList.add('playing'); }
+ 
+      // ← Bouton débloqué dès que l'audio est prêt, sans condition d'écoute minimale
+      if (submit) { submit.disabled = false; submit.textContent = 'Continuer →'; }
     },
-
+ 
     onProgress: (ct, dur) => {
-      // Accumule uniquement le temps réellement écouté
+      // Accumule la durée réellement écoutée (sans les sauts)
       if (lastTime > 0 && ct > lastTime) {
-        listenedSeconds += ct - lastTime;
+        state.listenedSeconds += ct - lastTime;
       }
       lastTime = ct;
-
-      // Mise à jour barre de progression
+ 
       const fill = document.getElementById('player-fill');
       const t    = document.getElementById('player-time');
       if (fill && dur) fill.style.width = (ct / dur * 100) + '%';
       if (t)           t.textContent = formatTime(ct);
-
-      // Déblocage basé sur écoute réelle
-      if (!unlocked && dur > 0 && listenedSeconds >= dur * LISTEN_THRESHOLD) {
-        unlocked = true;
-        _unlockButton();
-      }
     },
-
+ 
     onEnded: () => {
       const player = document.getElementById('player');
       const btn    = document.getElementById('play-btn');
       if (player) player.classList.remove('playing');
       if (btn)    { btn.textContent = '▶'; btn.classList.remove('playing'); }
-
-      // Si l'utilisateur est arrivé à la fin sans avoir atteint le seuil
-      if (!unlocked) {
-        unlocked = true;
-        _unlockButton();
-      }
     },
-
+ 
     onError: () => {
-      const hint = document.getElementById('autoplay-hint');
-      if (hint) { hint.textContent = '⚠ Fichier audio indisponible'; hint.classList.add('visible'); }
-      // Débloque quand même pour ne pas bloquer le participant
-      if (!unlocked) { unlocked = true; _unlockButton(); }
+      const hint   = document.getElementById('autoplay-hint');
+      const submit = document.getElementById('btn');
+      if (hint)   { hint.textContent = '⚠ Fichier audio indisponible'; hint.classList.add('visible'); }
+      // Débloque quand même si erreur
+      if (submit) { submit.disabled = false; submit.textContent = 'Continuer →'; }
     },
   });
-
+ 
   // Tentative d'autoplay
   state.player.play().catch(() => {
     const hint   = document.getElementById('autoplay-hint');
     const player = document.getElementById('player');
+    const submit = document.getElementById('btn');
     if (hint)   hint.classList.add('visible');
     if (player) player.classList.add('waiting');
+    // Même sans autoplay, le bouton est accessible
+    if (submit) { submit.disabled = false; submit.textContent = 'Continuer →'; }
   });
 }
-
-function _unlockButton() {
-  const btn = document.getElementById('btn');
-  if (btn) { btn.disabled = false; btn.textContent = 'Continuer →'; }
-}
-
-
+ 
+ 
 /* ══════════════════════════════════════════════════════════
-   CONTRÔLES PLAYER (appelés depuis le HTML inline)
+   CONTRÔLES PLAYER
    ══════════════════════════════════════════════════════════ */
-
+ 
 function togglePlay() {
   const p = state.player;
   if (!p) return;
-
-  const player  = document.getElementById('player');
-  const btn     = document.getElementById('play-btn');
-  const hint    = document.getElementById('autoplay-hint');
-
+ 
+  const player = document.getElementById('player');
+  const btn    = document.getElementById('play-btn');
+  const hint   = document.getElementById('autoplay-hint');
+ 
   if (p.paused) {
     p.play().then(() => {
       if (player) { player.classList.remove('waiting'); player.classList.add('playing'); }
@@ -437,37 +381,36 @@ function togglePlay() {
     if (btn)    { btn.textContent = '▶'; btn.classList.remove('playing'); }
   }
 }
-
+ 
 function seekTo(event) {
   const p = state.player;
   if (!p || !p.duration) return;
   const rect = event.currentTarget.getBoundingClientRect();
   p.seek((event.clientX - rect.left) / rect.width);
 }
-
-
+ 
+ 
 /* ══════════════════════════════════════════════════════════
    SEND
    ══════════════════════════════════════════════════════════ */
-
+ 
 async function send() {
   if (state.isSending) return;
-
+ 
   const btn = document.getElementById('btn');
-  if (btn?.disabled) return;   // bouton non encore débloqué
-
+  if (btn?.disabled) return;
+ 
   state.isSending = true;
   if (btn) { btn.disabled = true; btn.textContent = 'Envoi…'; }
-
-  // Détruire le player avant la requête
-  if (state.player) {
-    state.player.destroy();
-    state.player = null;
-  }
-
+ 
+  // Snapshot de listenedSeconds avant de détruire le player
+  const listenDuration = parseFloat(state.listenedSeconds.toFixed(3));
+ 
+  if (state.player) { state.player.destroy(); state.player = null; }
+ 
   const s  = state.stimuli[state.idx];
   const rt = (Date.now() - state.startTime) / 1000;
-
+ 
   const payload = {
     participant_id:   state.participantId,
     stim_id:          s.stim_id || s.audio_file || String(state.idx),
@@ -478,46 +421,45 @@ async function send() {
     trial_index:      state.idx,
     session_id:       state.participantId,
     condition:        'main',
+    listen_duration:  listenDuration,   // ← durée d'écoute réelle en secondes
     timestamp_client: Date.now(),
   };
-
+ 
   try {
     const res = await fetch('/response', {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
       body:    JSON.stringify(payload),
     });
-
+ 
     if (!res.ok) {
       const detail = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
       throw new Error(detail.error || `HTTP ${res.status}`);
     }
-
+ 
   } catch (e) {
     console.error('Send error:', e);
     state.isSending = false;
     _showSendError(e.message);
     return;
   }
-
+ 
   state.idx++;
   state.isSending = false;
-
-  // Fixation cross
+ 
   const content = document.getElementById('content');
   if (content) content.innerHTML = '<div class="fixation">+</div>';
-
+ 
   setTimeout(() => render(), FIXATION_DELAY_MS);
 }
-
+ 
 function _showSendError(msg) {
   const btn = document.getElementById('btn');
   if (btn) { btn.disabled = false; btn.textContent = 'Réessayer'; }
-
-  // Toast d'erreur non-intrusif
+ 
   const existing = document.getElementById('error-toast');
   if (existing) existing.remove();
-
+ 
   const toast = document.createElement('div');
   toast.id = 'error-toast';
   toast.style.cssText = `
@@ -531,12 +473,12 @@ function _showSendError(msg) {
   document.body.appendChild(toast);
   setTimeout(() => toast.remove(), 5000);
 }
-
-
+ 
+ 
 /* ══════════════════════════════════════════════════════════
    BUILDERS HTML
    ══════════════════════════════════════════════════════════ */
-
+ 
 function buildTrialHTML(s, i) {
   return `
     <div>
@@ -553,9 +495,9 @@ function buildTrialHTML(s, i) {
           <div class="waveform">${buildWaveform()}</div>
         </div>
       </div>
-
+ 
       <div class="autoplay-hint" id="autoplay-hint">▶ Appuie sur le bouton pour écouter</div>
-
+ 
       <div class="slider-block">
         <div class="slider-header">
           <span class="slider-label">Groove</span>
@@ -566,7 +508,7 @@ function buildTrialHTML(s, i) {
         </div>
         <input type="range" id="g" min="1" max="7" value="4" oninput="syncSlider(this,'gv')">
       </div>
-
+ 
       <div class="slider-block">
         <div class="slider-header">
           <span class="slider-label">Complexité</span>
@@ -577,24 +519,24 @@ function buildTrialHTML(s, i) {
         </div>
         <input type="range" id="c" min="1" max="7" value="4" oninput="syncSlider(this,'cv')">
       </div>
-
+ 
       <button class="btn" onclick="send()" id="btn" disabled>
-        Écoute en cours…
+        Chargement…
       </button>
     </div>`;
 }
-
+ 
 function buildWaveform() {
   return WAVEFORM_HEIGHTS.map((h, i) =>
     `<span style="height:${h}px;--d:${(0.45 + i * 0.08).toFixed(2)}s"></span>`
   ).join('');
 }
-
-
+ 
+ 
 /* ══════════════════════════════════════════════════════════
    THANKS
    ══════════════════════════════════════════════════════════ */
-
+ 
 function showThanks() {
   const task = document.getElementById('screen-task');
   if (task) task.innerHTML = `
@@ -608,12 +550,12 @@ function showThanks() {
       <div class="thanks-detail">ID session : ${state.participantId || '—'}</div>
     </div>`;
 }
-
-
+ 
+ 
 /* ══════════════════════════════════════════════════════════
    UTILITAIRES
    ══════════════════════════════════════════════════════════ */
-
+ 
 function syncSlider(input, pillId) {
   if (!input) return;
   const min = Number(input.min);
@@ -624,7 +566,7 @@ function syncSlider(input, pillId) {
   const pill = document.getElementById(pillId);
   if (pill) pill.textContent = val;
 }
-
+ 
 function shuffle(a) {
   for (let i = a.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
@@ -632,30 +574,27 @@ function shuffle(a) {
   }
   return a;
 }
-
-/** Précharge silencieusement l'audio du prochain stimulus. */
+ 
 function preloadOne(s) {
   if (!s?.audio_url) return;
   const a = new Audio();
   a.preload = 'auto';
   a.src = s.audio_url;
-  // L'élément reste orphelin — c'est voulu : le navigateur le met en cache
-  // et le GC le récupère quand il n'est plus référencé.
 }
-
+ 
 function escHtml(str) {
   return String(str)
     .replace(/&/g, '&amp;').replace(/"/g, '&quot;')
     .replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
-
+ 
 function formatTime(sec) {
   if (!isFinite(sec)) return '--:--';
   const m = Math.floor(sec / 60);
   const s = Math.floor(sec % 60);
   return `${m}:${String(s).padStart(2, '0')}`;
 }
-
+ 
 function showError(msg) {
   const app = document.getElementById('app');
   if (app) app.innerHTML =
@@ -663,12 +602,12 @@ function showError(msg) {
        <p style="color:var(--muted);font-size:14px">${msg}</p>
      </div>`;
 }
-
-
+ 
+ 
 /* ══════════════════════════════════════════════════════════
    BOOT
    ══════════════════════════════════════════════════════════ */
-
+ 
 document.addEventListener('DOMContentLoaded', () => {
   showScreen('screen-consent');
   init();
