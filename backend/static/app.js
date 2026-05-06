@@ -139,13 +139,15 @@ function render() {
         return;
     }
 
+    listenedEnough = false;
+
     const s   = stimuli[idx];
     const pct = Math.round((idx / stimuli.length) * 100);
 
     document.getElementById('progress').style.width      = pct + '%';
     document.getElementById('counter-left').textContent  = `Extrait ${idx + 1} / ${stimuli.length}`;
     document.getElementById('counter-right').textContent = pct + '%';
-
+    
     canRespond = false;
 
     if (idx + 1 < stimuli.length) preloadOne(stimuli[idx + 1]);
@@ -244,22 +246,58 @@ function mountPlayer(url) {
     });
 }
 
+const MIN_LISTEN_FRACTION = 0.2;   // 20% de l'extrait
+const MIN_LISTEN_ABS_S    = 3.0;   // ou au moins 3 secondes (si extrait très court)
+ 
+let listenedEnough = false;
+ 
 function onCanPlay() {
-    const hint = document.getElementById('autoplay-hint');
-    if (hint) hint.classList.remove('visible');
-
+    const hint    = document.getElementById('autoplay-hint');
     const player  = document.getElementById('player');
     const playBtn = document.getElementById('play-btn');
+ 
+    if (hint)    hint.classList.remove('visible');
     if (player)  { player.classList.remove('waiting'); player.classList.add('playing'); }
     if (playBtn) { playBtn.textContent = '⏸'; playBtn.classList.add('playing'); }
-
-    start_time = Date.now();
-
-    setTimeout(() => {
-        canRespond = true;
-        const btn = document.getElementById('btn');
-        if (btn) { btn.disabled = false; btn.textContent = 'Continuer →'; }
-    }, 800);
+ 
+    start_time    = Date.now();
+    listenedEnough = false;
+ 
+    // Polling toutes les 500ms pour vérifier le seuil d'écoute
+    const audio = currentAudio;
+    const checkInterval = setInterval(() => {
+        if (!audio || audio.paused) return;
+ 
+        const dur = audio.duration;
+        const cur = audio.currentTime;
+ 
+        if (!isFinite(dur) || dur === 0) return;
+ 
+        const fractionOk = cur / dur >= MIN_LISTEN_FRACTION;
+        const absOk      = cur >= MIN_LISTEN_ABS_S;
+ 
+        if ((fractionOk || absOk) && !listenedEnough) {
+            listenedEnough = true;
+            canRespond     = true;
+            clearInterval(checkInterval);
+ 
+            const btn = document.getElementById('btn');
+            if (btn) {
+                btn.disabled    = false;
+                btn.textContent = 'Continuer →';
+            }
+        }
+ 
+        // Sécurité : si la piste se termine sans avoir atteint le seuil
+        // (extrait très court), on autorise quand même la réponse
+        if (audio.ended && !listenedEnough) {
+            listenedEnough = true;
+            canRespond     = true;
+            clearInterval(checkInterval);
+            const btn = document.getElementById('btn');
+            if (btn) { btn.disabled = false; btn.textContent = 'Continuer →'; }
+        }
+    }, 500);
 }
 
 function onTimeUpdate() {
@@ -350,39 +388,42 @@ function goIntro() {
 /* ── Send ────────────────────────────────────────────────── */
 async function send() {
     if (!canRespond || is_sending) return;
+ 
+    // Guard supplémentaire : s'assure que l'écoute minimale est bien atteinte
+    // (défense en profondeur en cas de bug dans le polling)
+    if (!listenedEnough) {
+        const btn = document.getElementById('btn');
+        if (btn) btn.textContent = 'Écoute en cours…';
+        return;
+    }
+ 
     is_sending = true;
-
+ 
     const s   = stimuli[idx];
     const rt  = (Date.now() - start_time) / 1000;
     const btn = document.getElementById('btn');
-
+ 
     if (btn) { btn.disabled = true; btn.textContent = 'Envoi…'; }
-
+ 
     if (currentAudio) {
         currentAudio.pause();
         currentAudio.src = '';
         currentAudio = null;
     }
-
+ 
     const payload = {
-        participant_id: participant_id,
-
-        stim_id: s.stim_id || s.audio_file || String(idx),
-
-        groove: Number(document.getElementById('g').value),
-        complexity: Number(document.getElementById('c').value),
-
-        rt: parseFloat(rt.toFixed(3)),
-        rt_type: "response",
-
-        trial_index: idx,
-
-        session_id: participant_id, // simple et suffisant
-
-        condition: "main", // adapte si tu as plusieurs conditions
-
-        timestamp_client: Date.now()
+        participant_id:   participant_id,
+        stim_id:          s.stim_id || s.audio_file || String(idx),
+        groove:           Number(document.getElementById('g').value),
+        complexity:       Number(document.getElementById('c').value),
+        rt:               parseFloat(rt.toFixed(3)),
+        rt_type:          "response",
+        trial_index:      idx,
+        session_id:       participant_id,
+        condition:        "main",
+        timestamp_client: Date.now(),
     };
+ 
     try {
         const res = await fetch('/response', {
             method:  'POST',
@@ -390,19 +431,18 @@ async function send() {
             body:    JSON.stringify(payload),
         });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
-
     } catch (e) {
         console.error('Send error:', e);
         is_sending = false;
         if (btn) { btn.disabled = false; btn.textContent = 'Réessayer'; }
         return;
     }
-
+ 
     idx++;
-
-    document.getElementById('content').innerHTML =
-        `<div class="fixation">+</div>`;
-
+    listenedEnough = false;   // reset pour le prochain essai
+ 
+    document.getElementById('content').innerHTML = `<div class="fixation">+</div>`;
+ 
     setTimeout(() => {
         is_sending = false;
         render();

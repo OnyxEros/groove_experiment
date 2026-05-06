@@ -144,3 +144,39 @@ def describe_dataset(df: pd.DataFrame, features: list[str]) -> None:
     print(f"  groove range     : [{df[TARGET].min():.1f} – {df[TARGET].max():.1f}]")
     print(f"{'─'*w}\n")
  
+
+
+# ── Constante à ajuster selon la durée réelle des extraits ──
+RT_MIN_S  = 4.0    # en dessous = réponse avant d'avoir vraiment écouté
+RT_MAX_S  = 600.0  # au-dessus  = participant parti faire autre chose
+ 
+ 
+def filter_valid_responses(df):
+    """
+    Filtre les réponses aberrantes avant agrégation.
+    À appeler sur le DataFrame brut retourné par fetch_ratings().
+ 
+    Args:
+        df : DataFrame avec colonnes rt, groove, participant_id
+ 
+    Returns:
+        df filtré + rapport console
+    """
+    before = len(df)
+ 
+    if "rt" in df.columns:
+        df = df[
+            df["rt"].between(RT_MIN_S, RT_MAX_S, inclusive="both") |
+            df["rt"].isna()   # on garde les RT manquants plutôt que de les perdre
+        ].copy()
+ 
+    after = len(df)
+    n_dropped = before - after
+ 
+    if n_dropped > 0:
+        print(
+            f"[data_loader] {n_dropped} réponses filtrées "
+            f"(RT < {RT_MIN_S}s ou > {RT_MAX_S}s)"
+        )
+ 
+    return df
