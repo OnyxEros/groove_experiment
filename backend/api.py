@@ -273,12 +273,11 @@ async def save_response(resp: Response, request: Request):
 
 # ── Frontend ──────────────────────────────────────────────
 
-@app.get("/", response_class=HTMLResponse, include_in_schema=False)
+from fastapi.responses import FileResponse
+
+@app.get("/", include_in_schema=False)
 def home():
-    try:
-        return INDEX_PATH.read_text(encoding="utf-8")
-    except FileNotFoundError:
-        raise HTTPException(status_code=404, detail="index.html introuvable")
+    return FileResponse(INDEX_PATH)
 
 
 # ── Global error handler ──────────────────────────────────
