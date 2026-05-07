@@ -1,49 +1,100 @@
+"""
+analysis/viz/generative_validation.py
+======================================
+Figure de validation du modèle génératif — style publication mémoire.
+
+Quatre panneaux :
+    A — Matrice de corrélations de Pearson (paramètres génératifs → descripteurs)
+    B — Stochasticité intra-condition (violin plots, CV par descripteur)
+        Robuste aux conditions avec une seule répétition (Phase 3).
+    C — Couverture de l'espace de génération (heatmap Smv × Dmv)
+    D — Multicolinéarité (barres VIF horizontales)
+
+Corrections v2 :
+    - Panel B : gère le cas où toutes les conditions ont 1 seule répétition
+      (Phase 3 seule). Affiche un message clair plutôt que de crasher.
+      Adapte le titre selon qu'il y a des données ou non.
+    - Corrélations : ajoute P → P_real si disponible.
+    - VIF : ajoute P_real si disponible.
+"""
+
+import matplotlib
+matplotlib.use("Agg")
+
 import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
-import seaborn as sns
+import matplotlib.patches as mpatches
+import matplotlib.ticker as ticker
 import numpy as np
 import pandas as pd
 from scipy.stats import pearsonr
 from statsmodels.stats.outliers_influence import variance_inflation_factor
 
+BLUE   = "#2563EB"
+BLUE_L = "#DBEAFE"
+RED    = "#DC2626"
+RED_L  = "#FEE2E2"
+AMBER  = "#D97706"
+AMBER_L= "#FEF3C7"
+GREEN  = "#16A34A"
+GREEN_L= "#DCFCE7"
+GRAY   = "#6B7280"
+GRAY_L = "#F3F4F6"
+
+RC = {
+    "font.family":          "sans-serif",
+    "font.sans-serif":      ["Helvetica Neue", "Helvetica", "Arial", "DejaVu Sans"],
+    "font.size":            8,
+    "axes.labelsize":       8,
+    "axes.titlesize":       9,
+    "axes.titleweight":     "semibold",
+    "axes.titlelocation":   "left",
+    "axes.titlepad":        6,
+    "axes.spines.top":      False,
+    "axes.spines.right":    False,
+    "axes.linewidth":       0.6,
+    "axes.labelcolor":      "#374151",
+    "axes.edgecolor":       "#D1D5DB",
+    "xtick.labelsize":      7.5,
+    "ytick.labelsize":      7.5,
+    "xtick.color":          "#6B7280",
+    "ytick.color":          "#6B7280",
+    "xtick.major.size":     3,
+    "ytick.major.size":     3,
+    "xtick.major.width":    0.5,
+    "ytick.major.width":    0.5,
+    "grid.color":           "#E5E7EB",
+    "grid.linewidth":       0.4,
+    "legend.fontsize":      7.5,
+    "legend.framealpha":    1.0,
+    "legend.edgecolor":     "#E5E7EB",
+    "legend.borderpad":     0.5,
+    "figure.dpi":           150,
+    "savefig.dpi":          300,
+    "savefig.bbox":         "tight",
+    "savefig.facecolor":    "white",
+    "text.color":           "#111827",
+}
+
+
+def _add_panel_label(ax, label: str) -> None:
+    ax.text(-0.08, 1.08, label, transform=ax.transAxes,
+            fontsize=10, fontweight="bold",
+            va="top", ha="left", color="#111827")
+
 
 class GenerativeValidation:
-    """
-    Four-panel validation figure for the generative model.
 
-    Panel A: Correlation matrix between generative params and emergent descriptors
-    Panel B: Intra-condition variance (violin plots)
-    Panel C: Coverage heatmap (stimulus density in design space)
-    Panel D: VIF bar chart (multicollinearity check)
-    """
+    def plot(self, df: pd.DataFrame, path, verbose: bool = False) -> None:
+        plt.rcParams.update(RC)
 
-    def plot(self, df, path, verbose=False):
-
-        # =====================================================
-        # STYLE
-        # =====================================================
-        plt.rcParams.update({
-            "font.family": "sans-serif",
-            "font.sans-serif": ["Arial", "Helvetica", "DejaVu Sans"],
-            "font.size": 8,
-            "axes.labelsize": 8,
-            "axes.titlesize": 9,
-            "axes.titleweight": "bold",
-            "axes.titlelocation": "left",
-            "xtick.labelsize": 7,
-            "ytick.labelsize": 7,
-        })
-
-        fig = plt.figure(figsize=(12, 10))
+        fig = plt.figure(figsize=(11, 8.5))
         gs = gridspec.GridSpec(
             2, 2,
             figure=fig,
-            hspace=0.35,
-            wspace=0.30,
-            left=0.08,
-            right=0.95,
-            top=0.93,
-            bottom=0.07
+            hspace=0.52, wspace=0.38,
+            left=0.09, right=0.96,
+            top=0.93, bottom=0.09,
         )
 
         axA = fig.add_subplot(gs[0, 0])
@@ -51,238 +102,304 @@ class GenerativeValidation:
         axC = fig.add_subplot(gs[1, 0])
         axD = fig.add_subplot(gs[1, 1])
 
+        self._panel_A_corr(axA, df, verbose)
+        self._panel_B_stochasticity(axB, df, verbose)
+        self._panel_C_coverage(axC, df, verbose)
+        self._panel_D_vif(axD, df, verbose)
+
+        fig.suptitle(
+            "Validation du modèle génératif",
+            fontsize=11, fontweight="semibold",
+            color="#111827", y=0.97,
+        )
+
+        plt.savefig(path)
+        plt.close()
         if verbose:
-            print("\n=== GENERATIVE VALIDATION ===")
-            print("N stimuli:", len(df))
-            print("Columns:", df.columns.tolist())
+            print(f"  [fig] {path}")
 
-        # =====================================================
-        # PANEL A: CORRELATION MATRIX
-        # =====================================================
-        params = ["S_mv", "D_mv", "E"]
-        descriptors = ["D", "I", "V", "S_real", "E_real"]
+    # ── Panel A : Corrélations ────────────────────────────
 
-        corr_data = []
-        for p in params:
-            row = []
-            for d in descriptors:
+    def _panel_A_corr(self, ax, df, verbose):
+        # Paramètres génératifs disponibles
+        params_candidates = ["S_mv", "D_mv", "E", "P"]
+        params = [p for p in params_candidates if p in df.columns]
+
+        # Descripteurs réalisés disponibles
+        desc_candidates = ["D", "I", "V", "S_real", "E_real", "P_real"]
+        descriptors = [d for d in desc_candidates if d in df.columns]
+
+        if not params or not descriptors:
+            ax.text(0.5, 0.5, "Données insuffisantes",
+                    ha="center", va="center", transform=ax.transAxes)
+            _add_panel_label(ax, "A")
+            ax.set_title("Paramètres → descripteurs")
+            return
+
+        corr = np.zeros((len(params), len(descriptors)))
+        for i, p in enumerate(params):
+            for j, d in enumerate(descriptors):
                 try:
                     r, _ = pearsonr(df[p], df[d])
+                    corr[i, j] = r
                 except Exception:
-                    r = np.nan
-                row.append(r)
-            corr_data.append(row)
+                    corr[i, j] = np.nan
 
-        corr_matrix = np.array(corr_data)
-        if verbose:
-            print("\n[Panel A] Correlation matrix (S_mv, D_mv, E → descriptors)")
-            print(pd.DataFrame(
-                corr_matrix,
-                index=params,
-                columns=descriptors
-            ))
-
-        im = axA.imshow(corr_matrix, cmap="RdBu_r", vmin=-1, vmax=1, aspect="auto")
-        axA.set_xticks(range(len(descriptors)))
-        axA.set_xticklabels(descriptors, rotation=45, ha="right")
-        axA.set_yticks(range(len(params)))
-        axA.set_yticklabels(params)
-        axA.set_title("A  Generative → Emergent Correlations", pad=8)
+        im = ax.imshow(corr, cmap="RdBu_r", vmin=-1, vmax=1, aspect="auto")
 
         for i in range(len(params)):
             for j in range(len(descriptors)):
-                val = corr_matrix[i, j]
-                axA.text(
-                    j, i,
-                    f"{val:.2f}" if not np.isnan(val) else "nan",
-                    ha="center",
-                    va="center",
-                    color="white" if abs(val) > 0.5 else "black" if not np.isnan(val) else "black",
-                    fontsize=7,
-                    weight="bold"
-                )
+                v = corr[i, j]
+                color = "white" if abs(v) > 0.45 else "#374151"
+                ax.text(j, i,
+                        f"{v:.2f}" if not np.isnan(v) else "—",
+                        ha="center", va="center",
+                        fontsize=7.5, fontweight="medium", color=color)
 
-        cbar = fig.colorbar(im, ax=axA, fraction=0.046, pad=0.04)
-        cbar.set_label("Pearson r", fontsize=7)
-        cbar.ax.tick_params(labelsize=6)
+        # Labels TeX
+        desc_tex = {
+            "D": "$D$", "I": "$I$", "V": "$V$",
+            "S_real": "$S_{real}$", "E_real": "$E_{real}$", "P_real": "$P_{real}$",
+        }
+        param_tex = {
+            "S_mv": "$S_{mv}$", "D_mv": "$D_{mv}$",
+            "E": "$E$", "P": "$P$",
+        }
 
-        # =====================================================
-        # PANEL B: INTRA-CONDITION VARIANCE
-        # =====================================================
-        # Group by condition (S_mv, D_mv, E) and compute variance of realized descriptors
-        variance_data = []
+        ax.set_xticks(range(len(descriptors)))
+        ax.set_xticklabels([desc_tex.get(d, d) for d in descriptors], fontsize=8)
+        ax.set_yticks(range(len(params)))
+        ax.set_yticklabels([param_tex.get(p, p) for p in params], fontsize=8)
+        ax.tick_params(length=0)
 
-        for (s, d, e), group in df.groupby(["S_mv", "D_mv", "E"]):
-            if len(group) > 1:
-                for desc in ["D", "I", "V", "S_real", "E_real"]:
-                    variance_data.append({
-                        "descriptor": desc,
-                        "variance": group[desc].var(),
-                        "cv": group[desc].std() / (group[desc].mean() + 1e-10)
-                    })
+        cbar = plt.colorbar(im, ax=ax, fraction=0.04, pad=0.03, shrink=0.9)
+        cbar.set_label("Pearson $r$", fontsize=7.5, color="#6B7280")
+        cbar.ax.tick_params(labelsize=7, length=2)
+        cbar.outline.set_linewidth(0.4)
 
-        var_df = pd.DataFrame(variance_data)
+        _add_panel_label(ax, "A")
+        ax.set_title("Paramètres → descripteurs")
 
-        if verbose:
-            print("\n[Panel B] Intra-condition variability (CV summary)")
-            if len(var_df) > 0:
-                print(var_df.groupby("descriptor")["cv"].describe())
-            else:
-                print("No repeated conditions → no variance computed")
+    # ── Panel B : Stochasticité intra-condition ───────────
 
-        if len(var_df) > 0:
-            sns.violinplot(
-                data=var_df,
-                x="descriptor",
-                y="cv",
-                ax=axB,
-                color="#7fc97f",
-                inner="quartile"
+    def _panel_B_stochasticity(self, ax, df, verbose):
+        descriptors = ["D", "I", "V", "S_real", "E_real"]
+        available   = [d for d in descriptors if d in df.columns]
+
+        if not available:
+            ax.text(0.5, 0.5, "Descripteurs absents",
+                    ha="center", va="center", transform=ax.transAxes,
+                    fontsize=8, color=GRAY)
+            _add_panel_label(ax, "B")
+            ax.set_title("Stochasticité intra-condition")
+            return
+
+        desc_tex = {"D": "$D$", "I": "$I$", "V": "$V$",
+                    "S_real": "$S_{real}$", "E_real": "$E_{real}$"}
+
+        # Grouper par condition — uniquement les groupes avec ≥ 2 répétitions
+        group_cols = [c for c in ["S_mv", "D_mv", "E"] if c in df.columns]
+        cv_data = {d: [] for d in available}
+        n_groups_with_repeats = 0
+
+        if group_cols:
+            for _, group in df.groupby(group_cols):
+                if len(group) < 2:
+                    continue
+                n_groups_with_repeats += 1
+                for d in available:
+                    mu  = group[d].mean()
+                    sigma = group[d].std(ddof=1)
+                    if abs(mu) > 1e-10:
+                        cv_data[d].append(float(sigma / abs(mu)))
+
+        # Cas : aucun groupe avec répétitions (Phase 3 seule)
+        if n_groups_with_repeats == 0:
+            ax.text(
+                0.5, 0.55,
+                "Stochasticité non estimable\n(Phase 3 : 1 réalisation/condition)",
+                ha="center", va="center", transform=ax.transAxes,
+                fontsize=8.5, color=GRAY, style="italic",
+                multialignment="center",
             )
-            axB.set_xlabel("Descriptor")
-            axB.set_ylabel("Coefficient of Variation")
-            axB.set_title("B  Intra-Condition Stochasticity", pad=8)
-            axB.tick_params(axis='x', rotation=45)
-            axB.grid(alpha=0.2, axis='y', linestyle=":")
-        else:
-            axB.text(
-                0.5, 0.5,
-                "No repeated conditions\n(all repeats = 0)",
-                ha="center",
-                va="center",
-                transform=axB.transAxes,
-                fontsize=9,
-                color="#999999"
+            ax.text(
+                0.5, 0.35,
+                "Phases 1 & 2 : 4–5 répétitions/condition\n"
+                "(données non incluses dans ce run)",
+                ha="center", va="center", transform=ax.transAxes,
+                fontsize=7.5, color="#9CA3AF",
+                multialignment="center",
             )
-            axB.set_title("B  Intra-Condition Stochasticity", pad=8)
+            _add_panel_label(ax, "B")
+            ax.set_title("Stochasticité intra-condition")
+            ax.set_xlim(0, 1)
+            ax.set_ylim(0, 1)
+            ax.axis("off")
+            return
 
-        # =====================================================
-        # PANEL C: COVERAGE HEATMAP
-        # =====================================================
+        plot_data = [cv_data[d] for d in available]
+        positions = np.arange(1, len(available) + 1)
+
+        # Violin + scatter
+        valid_idx = [i for i, x in enumerate(plot_data) if len(x) > 1]
+        if valid_idx:
+            vp = ax.violinplot(
+                [plot_data[i] for i in valid_idx],
+                positions=[positions[i] for i in valid_idx],
+                showmedians=True, showextrema=False, widths=0.55,
+            )
+            for body in vp["bodies"]:
+                body.set_facecolor(BLUE_L)
+                body.set_edgecolor(BLUE)
+                body.set_alpha(0.85)
+                body.set_linewidth(0.7)
+            vp["cmedians"].set_color(BLUE)
+            vp["cmedians"].set_linewidth(1.5)
+
+        # Scatter overlay
+        rng = np.random.default_rng(42)
+        for i, vals in enumerate(plot_data):
+            if not vals:
+                continue
+            jitter = rng.uniform(-0.12, 0.12, len(vals))
+            ax.scatter(positions[i] + jitter, vals,
+                       s=6, color=BLUE, alpha=0.35, linewidths=0)
+
+        ax.set_xticks(positions)
+        ax.set_xticklabels([desc_tex.get(d, d) for d in available], fontsize=8)
+        ax.set_ylabel("Coefficient de variation", labelpad=6)
+        ax.yaxis.set_major_locator(ticker.MaxNLocator(5, integer=False))
+        ax.grid(axis="y", linestyle=":", linewidth=0.5)
+        ax.set_xlim(0.3, len(available) + 0.7)
+
+        # Annotation du nombre de groupes
+        ax.text(0.98, 0.97,
+                f"{n_groups_with_repeats} conditions avec répétitions",
+                transform=ax.transAxes, ha="right", va="top",
+                fontsize=7, color="#9CA3AF")
+
+        _add_panel_label(ax, "B")
+        ax.set_title("Stochasticité intra-condition")
+
+    # ── Panel C : Couverture ──────────────────────────────
+
+    def _panel_C_coverage(self, ax, df, verbose):
         s_vals = sorted(df["S_mv"].unique())
         d_vals = sorted(df["D_mv"].unique())
-        e_vals = sorted(df["E"].unique())
 
-        if len(e_vals) <= 3:
-            # Small number of E values — show all as separate heatmaps is overkill
-            coverage = np.zeros((len(d_vals), len(s_vals)))
+        coverage = np.zeros((len(d_vals), len(s_vals)))
+        for i, d in enumerate(d_vals):
+            for j, s in enumerate(s_vals):
+                coverage[i, j] = ((df["S_mv"] == s) & (df["D_mv"] == d)).sum()
 
-            for i, d in enumerate(d_vals):
-                for j, s in enumerate(s_vals):
-                    coverage[i, j] = len(df[(df["S_mv"] == s) & (df["D_mv"] == d)])
-
-            if verbose:
-                print("\n[Panel C] Design space coverage")
-                print("S values:", s_vals)
-                print("D values:", d_vals)
-                print("E values:", e_vals)
-                print("Coverage matrix:\n", coverage)
-
-            im = axC.imshow(coverage, cmap="YlOrRd", aspect="auto", origin="lower")
-            axC.set_xticks(range(len(s_vals)))
-            axC.set_xticklabels([f"{int(s)}" for s in s_vals])
-            axC.set_yticks(range(len(d_vals)))
-            axC.set_yticklabels([f"{int(d)}" for d in d_vals])
-            axC.set_xlabel("$S_{\\mathrm{mv}}$")
-            axC.set_ylabel("$D_{\\mathrm{mv}}$")
-            axC.set_title("C  Design Space Coverage (all E)", pad=8)
-
-            for i in range(len(d_vals)):
-                for j in range(len(s_vals)):
-                    val = coverage[i, j]
-                    axC.text(
-                        j, i,
-                        f"{int(val)}",
-                        ha="center",
-                        va="center",
-                        color="white" if val > coverage.max() / 2 else "black",
-                        fontsize=7,
-                        weight="bold"
-                    )
-
-            cbar = fig.colorbar(im, ax=axC, fraction=0.046, pad=0.04)
-            cbar.set_label("Stimulus count", fontsize=7)
-            cbar.ax.tick_params(labelsize=6)
-
-        else:
-            axC.text(
-                0.5, 0.5,
-                f"Design space:\n{len(s_vals)} × {len(d_vals)} × {len(e_vals)}\n= {len(df)} stimuli",
-                ha="center",
-                va="center",
-                transform=axC.transAxes,
-                fontsize=9
-            )
-            axC.set_title("C  Design Space Coverage", pad=8)
-
-        # =====================================================
-        # PANEL D: VIF
-        # =====================================================
-        predictors = ["S_mv", "D", "I", "E", "V"]
-        available_preds = [p for p in predictors if p in df.columns]
-
-        if len(available_preds) >= 2:
-            X = df[available_preds].values
-
-            vif_data = []
-            for i, pred in enumerate(available_preds):
-                try:
-                    vif = variance_inflation_factor(X, i)
-                except Exception:
-                    vif = np.nan
-                vif_data.append({"predictor": pred, "VIF": vif})
-
-            vif_df = pd.DataFrame(vif_data)
-
-            if verbose:
-                print("\n[Panel D] VIF diagnostics")
-                print(vif_df.sort_values("VIF", ascending=False))
-
-            colors = [
-                "#d62728" if v > 10 else "#2ca02c" if v < 5 else "#ff7f0e"
-                for v in vif_df["VIF"]
-            ]
-
-            axD.barh(vif_df["predictor"], vif_df["VIF"], color=colors, alpha=0.8)
-            axD.axvline(5, linestyle="--", linewidth=1.5, alpha=0.7)
-            axD.axvline(10, linestyle="--", linewidth=1.5, alpha=0.7)
-
-            axD.set_xlabel("Variance Inflation Factor")
-            axD.set_title("D  Multicollinearity Check", pad=8)
-            axD.grid(alpha=0.2, axis='x', linestyle=":")
-
-            axD.text(
-                0.98, 0.02,
-                "VIF > 10 → severe multicollinearity\nVIF > 5 → moderate",
-                transform=axD.transAxes,
-                ha="right",
-                va="bottom",
-                fontsize=6,
-                color="#555555",
-                style="italic"
-            )
-
-        else:
-            axD.text(
-                0.5, 0.5,
-                "Insufficient predictors\nfor VIF calculation",
-                ha="center",
-                va="center",
-                transform=axD.transAxes,
-                fontsize=9,
-                color="#999999"
-            )
-            axD.set_title("D  Multicollinearity Check", pad=8)
-
-        # =====================================================
-        # TITLE
-        # =====================================================
-        fig.suptitle(
-            "Generative Model Validation: Parameter Dependencies and Design Space Coverage",
-            fontsize=11,
-            weight="bold",
-            y=0.98
+        from matplotlib.colors import LinearSegmentedColormap
+        cmap = LinearSegmentedColormap.from_list(
+            "coverage", ["#FEF3C7", "#D97706", "#92400E"], N=256
         )
 
-        plt.savefig(path, dpi=300, bbox_inches="tight", facecolor="white")
-        plt.close()
+        im = ax.imshow(coverage, cmap=cmap, aspect="auto", origin="lower")
+
+        for i in range(len(d_vals)):
+            for j in range(len(s_vals)):
+                v = int(coverage[i, j])
+                color = "white" if v >= coverage.max() * 0.5 else "#374151"
+                ax.text(j, i, str(v),
+                        ha="center", va="center",
+                        fontsize=9, fontweight="medium", color=color)
+
+        ax.set_xticks(range(len(s_vals)))
+        ax.set_xticklabels([f"$S_{{mv}}={s}$" for s in s_vals], fontsize=8)
+        ax.set_yticks(range(len(d_vals)))
+        ax.set_yticklabels([f"$D_{{mv}}={d}$" for d in d_vals], fontsize=8)
+        ax.set_xlabel("$S_{mv}$", labelpad=6)
+        ax.set_ylabel("$D_{mv}$", labelpad=6)
+        ax.tick_params(length=0)
+
+        cbar = plt.colorbar(im, ax=ax, fraction=0.04, pad=0.03, shrink=0.9)
+        cbar.set_label("Nombre de stimuli", fontsize=7.5, color="#6B7280")
+        cbar.ax.tick_params(labelsize=7, length=2)
+        cbar.outline.set_linewidth(0.4)
+
+        # Note sur le déséquilibre
+        max_cell = int(coverage.max())
+        min_cell = int(coverage[coverage > 0].min())
+        ax.text(0.98, 0.02,
+                f"Min={min_cell}  Max={max_cell}",
+                transform=ax.transAxes, ha="right", va="bottom",
+                fontsize=7, color="#9CA3AF")
+
+        _add_panel_label(ax, "C")
+        ax.set_title("Couverture de l'espace de design")
+
+    # ── Panel D : VIF ────────────────────────────────────
+
+    def _panel_D_vif(self, ax, df, verbose):
+        # Inclut P et P_real si disponibles
+        candidates = ["S_mv", "D", "I", "E", "V", "P", "P_real"]
+        available  = [p for p in candidates if p in df.columns]
+
+        if len(available) < 2:
+            ax.text(0.5, 0.5, "Données insuffisantes",
+                    ha="center", va="center", transform=ax.transAxes,
+                    fontsize=8, color=GRAY)
+            _add_panel_label(ax, "D")
+            ax.set_title("Multicolinéarité (VIF)")
+            return
+
+        X = df[available].dropna().values
+        vifs = []
+        for i in range(len(available)):
+            try:
+                v = variance_inflation_factor(X, i)
+            except Exception:
+                v = np.nan
+            vifs.append(v)
+
+        vif_df = sorted(zip(available, vifs), key=lambda x: x[1] if not np.isnan(x[1]) else 0, reverse=True)
+        names  = [x[0] for x in vif_df]
+        values = [x[1] for x in vif_df]
+
+        tex_map = {
+            "S_mv": "$S_{mv}$", "D": "$D$", "I": "$I$",
+            "E": "$E$", "V": "$V$", "S_real": "$S_{real}$",
+            "E_real": "$E_{real}$", "P": "$P$", "P_real": "$P_{real}$",
+        }
+
+        colors = []
+        for v in values:
+            if np.isnan(v) or v > 10:
+                colors.append(RED)
+            elif v > 5:
+                colors.append(AMBER)
+            else:
+                colors.append(GREEN)
+
+        y = np.arange(len(names))
+        bars = ax.barh(y, values, color=colors, alpha=0.85,
+                       height=0.55, edgecolor="none")
+
+        for bar, v in zip(bars, values):
+            if not np.isnan(v):
+                ax.text(v + 0.15, bar.get_y() + bar.get_height() / 2,
+                        f"{v:.1f}",
+                        va="center", fontsize=7.5, color="#374151")
+
+        ax.axvline(5,  color=AMBER, linewidth=0.9, linestyle="--", alpha=0.7, zorder=0)
+        ax.axvline(10, color=RED,   linewidth=0.9, linestyle="--", alpha=0.7, zorder=0)
+
+        ax.set_yticks(y)
+        ax.set_yticklabels([tex_map.get(n, n) for n in names], fontsize=8)
+        ax.set_xlabel("Variance Inflation Factor", labelpad=6)
+        ax.set_xlim(left=0)
+        ax.grid(axis="x", linestyle=":", linewidth=0.5)
+
+        legend_patches = [
+            mpatches.Patch(color=GREEN, alpha=0.85, label="VIF ≤ 5"),
+            mpatches.Patch(color=AMBER, alpha=0.85, label="VIF 5–10"),
+            mpatches.Patch(color=RED,   alpha=0.85, label="VIF > 10"),
+        ]
+        ax.legend(handles=legend_patches, loc="lower right",
+                  fontsize=7, framealpha=1.0)
+
+        _add_panel_label(ax, "D")
+        ax.set_title("Multicolinéarité (VIF)")

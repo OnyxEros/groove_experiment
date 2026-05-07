@@ -58,7 +58,7 @@ RESP_FILE     = DATA_DIR / "responses.csv"
 
 BACKEND_DIR    = BASE_DIR / "backend"
 INDEX_PATH     = BACKEND_DIR / "templates" / "index.html"
-SOUNDFONT_PATH = BASE_DIR / "GeneralUser-GS.sf2"
+SOUNDFONT_PATH = DATA_DIR / "soundfont" / "GeneralUser-GS.sf2"
 
 # =========================================================
 # SUPABASE
