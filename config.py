@@ -139,10 +139,10 @@ BASS_INTERVAL_BAR: list[int] = [
 # Vélocités de base par position (0–127), indexées comme BASS_PATTERN_BAR
 # Les ghost notes ont une vélocité faible indépendamment de E
 BASS_VELOCITY_BAR: list[int] = [
-    95,  0,  0,  0,   # temps 1 — fort
-    45,  0,  0,  0,   # temps 2 — ghost, très doux
-    75,  0,  0,  0,   # temps 3 — moyen
-     0,  0, 55,  0,   # temps 4 — note d'approche, doux
+    75,  0,  0,  0,   # temps 1 — fort
+    25,  0,  0,  0,   # temps 2 — ghost, très doux
+    55,  0,  0,  0,   # temps 3 — moyen
+     0,  0, 35,  0,   # temps 4 — note d'approche, doux
 ]
 
 # Durée des notes en fraction de step_duration

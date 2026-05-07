@@ -4,7 +4,7 @@ __pycache__/
 data/wav/
 data/midi/
 .DS_Store
-data/soundfont
+data/soundfont/
 data/preview/
 data/analysis/
 
