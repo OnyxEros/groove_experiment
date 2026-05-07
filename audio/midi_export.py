@@ -25,7 +25,7 @@ DEFAULT_VELOCITY = {
     "kick":  95,
     "bass":  85,
     "snare": 90,
-    "hihat": 75,
+    "hihat": 80,
 }
 
 
