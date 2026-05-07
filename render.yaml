@@ -1,0 +1,26 @@
+services:
+  - type: web
+    name: groove-study
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: >
+      uvicorn backend.api:app
+      --host 0.0.0.0
+      --port $PORT
+      --workers 2
+      --loop uvloop
+      --http httptools
+      --timeout-keep-alive 30
+    envVars:
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_KEY
+        sync: false
+      - key: ENV
+        value: prod
+      - key: DEBUG
+        value: "0"
+      # Optionnel : Redis pour rate limiter multi-worker
+      # - key: REDIS_URL
+      #   sync: false
+    healthCheckPath: /health

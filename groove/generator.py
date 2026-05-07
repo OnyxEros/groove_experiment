@@ -70,25 +70,34 @@ class Voices:
             p[o + bar // 2] = 1.0
         return p
 
-    def bass(self) -> np.ndarray:
+    def bass(self) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         """
-        Ligne de basse déterministe, verrouillée sur le kick.
-        Joue sur les temps 1 et 3 — root note, ancrage métrique pur.
-        Identique au kick : aucune variabilité entre conditions.
+        Ligne de basse déterministe, musicalement crédible.
+
+        Motif fixe sur 1 mesure (16 steps), répété sur toutes les mesures.
+        Inclut root, quinte, ghost notes et note d'approche.
+
+        Retourne :
+            pattern   : np.ndarray (n_steps,) — hits avec vélocité relative [0,1]
+            pitch     : np.ndarray (n_steps,) — pitch MIDI par step
+            velocity  : np.ndarray (n_steps,) — vélocité MIDI par step (0–127)
+            duration  : np.ndarray (n_steps,) — durée en secondes par step
         """
-        pattern = self.kick()
-        chords = [0, 9, 5, 7]  # I VI IV V
-        pitch  = np.zeros(self.total_steps)
+        bar    = self.steps_per_bar   # 16
+        n      = self.total_steps
+        sd     = config.step_duration_seconds()
 
-        segment_length = self.steps_per_bar // 2
+        pat_bar  = np.array(config.BASS_PATTERN_BAR,  dtype=np.float64)
+        int_bar  = np.array(config.BASS_INTERVAL_BAR, dtype=np.float64)
+        vel_bar  = np.array(config.BASS_VELOCITY_BAR, dtype=np.float64)
+        dur_bar  = np.array(config.BASS_DURATION_BAR, dtype=np.float64)
 
-        for b in range(self.total_steps // segment_length):
-            chord = chords[b % len(chords)]
-            start = b * segment_length
-            end   = start + segment_length
-            pitch[start:end] = config.BASS_PITCH + chord
+        pattern  = np.tile(pat_bar,  n // bar)[:n]
+        pitch    = np.tile(config.BASS_PITCH + int_bar, n // bar)[:n]
+        velocity = np.tile(vel_bar,  n // bar)[:n]
+        duration = np.tile(dur_bar,  n // bar)[:n] * sd
 
-        return pattern, pitch
+        return pattern, pitch, velocity, duration
 
     def snare(self) -> np.ndarray:
         p, bar = self._empty(), self.steps_per_bar
@@ -211,6 +220,55 @@ class MicroTiming:
         return jitters
 
 
+    def apply_bass(
+        self,
+        pattern: np.ndarray,
+        amount:  float = 0.0,
+    ) -> np.ndarray:
+        """
+        Jitter spécialisé pour la basse.
+
+        Deux composantes indépendantes de E :
+            - Anticipation fixe (BASS_ANTICIPATION_RATIO) : simule le
+              geste du bassiste qui "plante" légèrement en avance sur
+              les temps forts. Constante entre conditions.
+            - Bruit gaussien résiduel (BASS_HUMANIZE_NOISE_RATIO) :
+              micro-irrégularités d'exécution, amplitude fixe et faible.
+
+        Une composante dépendante de E :
+            - Swing baseline hérité du kick (amount × BASS_TIMING_SCALE),
+              cohérent avec l'humanisation globale du pattern.
+
+        La basse suit E pour rester cohérente avec le feel rythmique global,
+        mais garde une personnalité propre via l'anticipation fixe.
+        """
+        n    = len(pattern)
+        hits = np.where(pattern == 1.0)[0]
+
+        if len(hits) == 0:
+            return np.zeros(n, dtype=np.float64)
+
+        sd = self.step_duration
+
+        # ── Anticipation fixe (indépendante de E) ─────────────
+        anticipation = config.BASS_ANTICIPATION_RATIO * sd   # légèrement négatif = avance
+
+        # ── Bruit résiduel fixe ───────────────────────────────
+        sigma = config.BASS_HUMANIZE_NOISE_RATIO * sd
+        noise = self.rng.normal(0.0, sigma, size=n)
+
+        # ── Swing cohérent avec le groove global ──────────────
+        swing_total = (config.SWING_BASELINE + config.SWING_MAX_RATIO * amount) * sd
+        swing       = np.zeros(n)
+        swing[2::4] = swing_total
+
+        total_shift   = anticipation + noise + swing
+        jitters       = np.zeros(n, dtype=np.float64)
+        jitters[hits] = total_shift[hits] * config.BASS_VOICE_WEIGHT
+
+        return jitters
+
+
 # =========================================================
 # STIMULUS
 # =========================================================
@@ -232,7 +290,7 @@ class Stimulus:
         hihat_push_s = config.push_from_p_level(P_level) * self.micro.step_duration
 
         kick  = self.voices.kick()
-        bass, bass_pitch = self.voices.bass()
+        bass, bass_pitch, bass_vel, bass_dur = self.voices.bass()
         snare = self.voices.snare()
         hihat = self.voices.hihat(
             sync_level=cfg["S_mv"],
@@ -245,11 +303,9 @@ class Stimulus:
             amount=E * config.KICK_TIMING_SCALE,
             voice_weight=config.KICK_VOICE_WEIGHT,
         )
-
         bass_j = self.micro.apply(
             bass,
             amount=E * config.BASS_TIMING_SCALE,
-            voice_weight=config.BASS_VOICE_WEIGHT,
         )
         snare_j = self.micro.apply(
             snare,
@@ -270,6 +326,8 @@ class Stimulus:
             "kick":         kick,
             "bass":         bass,
             "bass_pitch":   bass_pitch,
+            "bass_vel":     bass_vel,
+            "bass_dur":     bass_dur,
             "snare":        snare,
             "hihat":        hihat,
             "kick_jitter":  kick_j,
