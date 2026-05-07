@@ -449,7 +449,7 @@
 
   <div class="topbar">
     <div class="logo">GROOVE<span>STUDY</span></div>
-    <div class="badge">v2.0 · EMC TSMA2</div>
+    <div class="badge">v2.1 · EMC TSMA2</div>
   </div>
 
   <!-- PROGRESS (caché sur écrans non-task) -->
@@ -540,7 +540,6 @@
       <div id="example-container">
         <div class="example-loading">Chargement de l'exemple…</div>
       </div>
-      <audio id="ex-audio" preload="auto"></audio>
     </div>
 
     <div class="divider"></div>
@@ -598,13 +597,7 @@
 
 </div>
 
+<!-- Fix #3 : script retiré d'ici, tout est dans app.js -->
 <script src="/static/app.js"></script>
-<script>
-  // Affiche l'écran consent au chargement, charge l'exemple en avance
-  document.addEventListener('DOMContentLoaded', () => {
-    showScreen('screen-consent');
-    loadExample();
-  });
-</script>
 </body>
 </html>

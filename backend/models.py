@@ -5,23 +5,27 @@ import re
 
 class Response(BaseModel):
     participant_id: str = Field(min_length=1, max_length=64)
-    stim_id: str = Field(min_length=1, max_length=128)
+    stim_id:        str = Field(min_length=1, max_length=128)
 
-    groove: int = Field(ge=1, le=7)
-    complexity: int = Field(ge=1, le=7)
+    groove:     int   = Field(ge=1, le=7)
+    complexity: int   = Field(ge=1, le=7)
 
-    rt: float = Field(ge=0, le=3600)  # cap à 1h, sanity check
-
+    rt:      float = Field(ge=0, le=3600)
     rt_type: Optional[str] = None
-    trial_index: Optional[int] = Field(default=None, ge=0, le=10_000)
-    session_id: Optional[str] = Field(default=None, max_length=128)
-    condition: Optional[str] = Field(default=None, max_length=64)
+
+    trial_index:      Optional[int]   = Field(default=None, ge=0, le=10_000)
+    session_id:       Optional[str]   = Field(default=None, max_length=128)
+    condition:        Optional[str]   = Field(default=None, max_length=64)
     timestamp_client: Optional[float] = None
+
+    # ── Nouveau : durée d'écoute réelle (secondes) ────────
+    # Envoyé par le frontend depuis AudioPlayer.onProgress.
+    # Permet de filtrer les réponses < seuil minimal en post-traitement.
+    listen_duration: Optional[float] = Field(default=None, ge=0, le=3600)
 
     @field_validator("participant_id", "stim_id")
     @classmethod
     def no_injection(cls, v: str) -> str:
-        """Rejette les caractères suspects (SQL / path traversal)."""
         if re.search(r"['\";\\/<>]", v):
             raise ValueError("Caractère invalide dans l'identifiant")
         return v.strip()
@@ -33,8 +37,6 @@ class Response(BaseModel):
 
     @model_validator(mode="after")
     def rt_consistent(self) -> "Response":
-        """Un RT de 0 n'est acceptable que si rt_type l'indique explicitement."""
         if self.rt == 0 and self.rt_type not in ("timeout", "skip", "error"):
-            # Avertissement soft — on ne bloque pas mais on normalise
             object.__setattr__(self, "rt_type", "zero")
         return self

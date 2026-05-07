@@ -6,3 +6,5 @@ data/midi/
 .DS_Store
 soundfont.sf2
 data/preview/
+data/analysis/
+GeneralUser-GS.sf2

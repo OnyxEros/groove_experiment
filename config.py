@@ -58,7 +58,7 @@ RESP_FILE     = DATA_DIR / "responses.csv"
 
 BACKEND_DIR    = BASE_DIR / "backend"
 INDEX_PATH     = BACKEND_DIR / "templates" / "index.html"
-SOUNDFONT_PATH = BASE_DIR / "soundfont.sf2"
+SOUNDFONT_PATH = BASE_DIR / "GeneralUser-GS.sf2"
 
 # =========================================================
 # SUPABASE
@@ -115,11 +115,51 @@ HIHAT_PROB_MAX = 0.90
 # BASSE — LIGNE MÉLODIQUE (ancrage métrique, non expérimental)
 # =========================================================
 
-BASS_PITCH        = 36   # C2 en MIDI — root note générique, pitch de basse standard
-BASS_VELOCITY     = 85   # En dessous du kick (95) — présence sans domination
-BASS_TIMING_SCALE = 0.20 # Même pondération que le kick — verrouillée sur lui
-BASS_VOICE_WEIGHT = 0.20 # Même poids de timing que le kick
+BASS_PITCH = 36   # C2 — root note
 
+# Motif rythmique sur 16 steps (1 mesure) — répété sur les 6 mesures
+# Positions : 0=temps1, 4=temps2, 8=temps3, 12=temps4 (en doubles croches)
+# 1  = hit normal  |  0.4 = ghost note  |  0 = silence
+BASS_PATTERN_BAR: list[float] = [
+    1.0, 0.0, 0.0, 0.0,   # temps 1 — root, ancrage fort
+    0.4, 0.0, 0.0, 0.0,   # temps 2 — ghost note, très légère
+    1.0, 0.0, 0.0, 0.0,   # temps 3 — quinte, ancrage secondaire
+    0.0, 0.0, 0.4, 0.0,   # temps 4 — note d'approche sur le "e" du 4
+]
+
+# Intervalles en demi-tons depuis BASS_PITCH, indexés par position dans la barre
+# Même longueur que BASS_PATTERN_BAR — lu uniquement sur les hits
+BASS_INTERVAL_BAR: list[int] = [
+    0,  0,  0,  0,   # temps 1 → root (C2)
+    0,  0,  0,  0,   # temps 2 → ghost sur root
+    7,  0,  0,  0,   # temps 3 → quinte (G2)
+    0,  0, 11,  0,   # temps 4 → note d'approche (B1, sensible, tension vers C)
+]
+
+# Vélocités de base par position (0–127), indexées comme BASS_PATTERN_BAR
+# Les ghost notes ont une vélocité faible indépendamment de E
+BASS_VELOCITY_BAR: list[int] = [
+    95,  0,  0,  0,   # temps 1 — fort
+    45,  0,  0,  0,   # temps 2 — ghost, très doux
+    75,  0,  0,  0,   # temps 3 — moyen
+     0,  0, 55,  0,   # temps 4 — note d'approche, doux
+]
+
+# Durée des notes en fraction de step_duration
+# Les ghost notes sont courtes (staccato), les notes d'ancrage sont longues (sustain)
+BASS_DURATION_BAR: list[float] = [
+    2.2, 0.0, 0.0, 0.0,   # temps 1 — sustain jusqu'au ghost
+    0.6, 0.0, 0.0, 0.0,   # temps 2 — ghost court
+    1.8, 0.0, 0.0, 0.0,   # temps 3 — sustain jusqu'à l'approche
+    0.0, 0.0, 0.8, 0.0,   # temps 4 — note d'approche courte
+]
+
+BASS_VELOCITY     = 85    # vélocité par défaut (fallback)
+BASS_TIMING_SCALE = 0.20
+BASS_VOICE_WEIGHT = 0.20
+
+BASS_ANTICIPATION_RATIO:   float = -0.06   # légère avance (6% du step ≈ 5ms)
+BASS_HUMANIZE_NOISE_RATIO: float = 0.03    # bruit résiduel (3% ≈ 2.5ms σ)
 
 # =========================================================
 # MICRO-TIMING — JITTER EXPRESSIF
