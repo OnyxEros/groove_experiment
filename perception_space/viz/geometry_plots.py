@@ -3,10 +3,8 @@ perception_space/viz/geometry_plots.py
 ======================================
 Figures publication-ready pour la géométrie locale de l'espace perceptif.
 
-Figures produites :
-    plot_local_geometry   — 4 panneaux : local_mean, std, slope, coherence
-    plot_permutation_test — distribution nulle + valeur observée
-    plot_condition_stats  — moyennes groove par condition (barres + CI)
+Corrections v2 :
+    - plot_condition_stats : groove_col paramétrable (plus de "groove_mean" hardcodé)
 """
 
 from __future__ import annotations
@@ -17,7 +15,6 @@ import matplotlib.gridspec as gridspec
 import matplotlib.patches as mpatches
 from pathlib import Path
 
-# ── Style partagé ─────────────────────────────────────────
 _RC = {
     "font.family":          "sans-serif",
     "font.sans-serif":      ["Arial", "Helvetica", "DejaVu Sans"],
@@ -54,16 +51,6 @@ def plot_local_geometry(
     title_prefix: str = "Groove",
     out_path: Path | None = None,
 ) -> plt.Figure:
-    """
-    4 panneaux scatter dans l'espace 2D des embeddings,
-    colorés par local_mean / local_std / local_slope / local_coherence.
-
-    Args:
-        geometry     : dict retourné par compute_local_geometry
-        embedding_2d : projection 2D (PCA ou UMAP), shape (n, 2)
-        title_prefix : "Groove" ou "Complexity"
-        out_path     : chemin de sauvegarde (PNG)
-    """
     plt.rcParams.update(_RC)
 
     metrics = [
@@ -81,11 +68,11 @@ def plot_local_geometry(
 
     labels = ["A", "B", "C", "D"]
     emb    = embedding_2d
+    k_eff  = geometry.get("k_effective", "?")
 
     for ax, (key, label, cmap), lbl in zip(axes.flat, metrics, labels):
         values = geometry[key]
 
-        # Robustesse : clip les outliers extrêmes pour la colormap
         vmin = float(np.percentile(values, 2))
         vmax = float(np.percentile(values, 98))
 
@@ -110,7 +97,7 @@ def plot_local_geometry(
         ax.grid(alpha=0.15, linestyle=":", linewidth=0.6)
 
     fig.suptitle(
-        f"Géométrie locale — {title_prefix} dans l'espace latent",
+        f"Géométrie locale — {title_prefix} dans l'espace latent  (k={k_eff})",
         fontsize=11, weight="bold", y=0.97
     )
 
@@ -130,9 +117,6 @@ def plot_permutation_test(
     perm_result: dict,
     out_path: Path | None = None,
 ) -> plt.Figure:
-    """
-    Distribution nulle du test de permutation + valeur observée.
-    """
     plt.rcParams.update(_RC)
 
     fig, ax = plt.subplots(figsize=(7, 4.5))
@@ -143,7 +127,6 @@ def plot_permutation_test(
     p_value    = perm_result["p_value"]
     sig        = perm_result.get("significant", p_value < 0.05)
 
-    # Histogramme distribution nulle
     ax.hist(
         null_dist,
         bins=40,
@@ -154,7 +137,6 @@ def plot_permutation_test(
         label="Distribution nulle (permutations)",
     )
 
-    # Valeur observée
     color_obs = _RED if sig else _ORANGE
     ax.axvline(
         observed_r,
@@ -164,7 +146,6 @@ def plot_permutation_test(
         label=f"r observé = {observed_r:.3f}",
     )
 
-    # Seuil 95%
     thresh = float(np.percentile(null_dist, 95))
     ax.axvline(
         thresh,
@@ -175,18 +156,10 @@ def plot_permutation_test(
         label=f"Seuil 95% = {thresh:.3f}",
     )
 
-    # Ombrage zone critique
     x_fill = null_dist[null_dist >= thresh]
     if len(x_fill):
-        ax.hist(
-            x_fill,
-            bins=40,
-            color=_BLUE,
-            alpha=0.25,
-            edgecolor="none",
-        )
+        ax.hist(x_fill, bins=40, color=_BLUE, alpha=0.25, edgecolor="none")
 
-    # Annotation p-value
     sig_txt = "★ significatif" if sig else "non significatif"
     ax.text(
         0.97, 0.95,
@@ -200,10 +173,7 @@ def plot_permutation_test(
 
     ax.set_xlabel("Corrélation distance-rating (r)", fontsize=9)
     ax.set_ylabel("Fréquence", fontsize=9)
-    ax.set_title(
-        "Test de permutation — Structure groove dans l'espace latent",
-        pad=8
-    )
+    ax.set_title("Test de permutation — Structure groove dans l'espace latent", pad=8)
     ax.legend(loc="upper left", fontsize=8)
     ax.grid(alpha=0.18, linestyle=":", linewidth=0.6, axis="y")
 
@@ -222,15 +192,16 @@ def plot_permutation_test(
 def plot_condition_stats(
     condition_stats: "pd.DataFrame",
     anova_results: "pd.DataFrame",
+    groove_col: str = "groove_mean",     # v2 : paramétrable
     out_path: Path | None = None,
 ) -> plt.Figure:
     """
     Moyennes groove ± CI95 pour chaque variable de design.
-    Panneaux séparés par condition.
 
     Args:
-        condition_stats : retour de compute_condition_stats (1 condition à la fois)
-        anova_results   : retour de kruskal_by_condition ou anova_by_condition
+        condition_stats : DataFrame joint (meta × ratings agrégés)
+        anova_results   : retour de kruskal_by_condition v2
+        groove_col      : nom de la colonne target (configurable)
     """
     import pandas as pd
     plt.rcParams.update(_RC)
@@ -241,6 +212,15 @@ def plot_condition_stats(
     n_panels = len(conditions)
     if n_panels == 0:
         return None
+
+    # Vérifie que groove_col existe dans le df
+    if groove_col not in condition_stats.columns:
+        available = [c for c in condition_stats.columns if "groove" in c.lower()]
+        if available:
+            groove_col = available[0]
+        else:
+            print(f"  [fig] plot_condition_stats : colonne '{groove_col}' introuvable")
+            return None
 
     fig, axes = plt.subplots(1, n_panels, figsize=(4.5 * n_panels, 5))
     if n_panels == 1:
@@ -262,43 +242,40 @@ def plot_condition_stats(
     for ax, cond, color in zip(axes, conditions, colors):
         grp = (
             condition_stats
-            .groupby(cond)["groove_mean"]
+            .groupby(cond)[groove_col]
             .agg(["mean", "std", "count"])
             .reset_index()
         )
         grp["ci95"] = 1.96 * grp["std"] / np.sqrt(grp["count"])
 
-        x      = grp[cond].values
-        means  = grp["mean"].values
-        ci95   = grp["ci95"].values
+        x    = grp[cond].values
+        means = grp["mean"].values
+        ci95  = grp["ci95"].values
 
-        ax.bar(
-            x, means,
-            color=color, alpha=0.75,
-            width=0.6 * (x[1] - x[0]) if len(x) > 1 else 0.4,
-            zorder=3,
-        )
-        ax.errorbar(
-            x, means, yerr=ci95,
-            fmt="none", color="#333333",
-            capsize=5, linewidth=1.5, zorder=4,
-        )
+        bar_width = 0.6 * (x[1] - x[0]) if len(x) > 1 else 0.4
+        ax.bar(x, means, color=color, alpha=0.75, width=bar_width, zorder=3)
+        ax.errorbar(x, means, yerr=ci95,
+                    fmt="none", color="#333333",
+                    capsize=5, linewidth=1.5, zorder=4)
 
-        # Annotation valeurs
         for xi, mi in zip(x, means):
             ax.text(xi, mi + 0.05, f"{mi:.2f}",
                     ha="center", va="bottom", fontsize=7.5)
 
-        # p-value depuis les résultats ANOVA/Kruskal
+        # Annotation test statistique (v2 : colonne "statistic" générique)
         if anova_results is not None and not anova_results.empty:
             row = anova_results[anova_results["condition"] == cond]
             if not row.empty:
-                p   = row.iloc[0]["p_value"]
-                et2 = row.iloc[0]["eta2"]
-                sig = "★" if p < 0.05 else "n.s."
+                r         = row.iloc[0]
+                p         = r["p_value"]
+                et2       = r["eta2"]
+                sig       = "★" if p < 0.05 else "n.s."
+                test_name = r.get("test_used", "test")
+                stat_val  = r.get("statistic", np.nan)
+
                 ax.text(
                     0.97, 0.97,
-                    f"η² = {et2:.3f}  {sig}\np = {p:.3f}",
+                    f"η² = {et2:.3f}  {sig}\np = {p:.3f}\n{test_name}={stat_val:.2f}",
                     transform=ax.transAxes,
                     ha="right", va="top",
                     fontsize=7.5,

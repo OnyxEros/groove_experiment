@@ -40,10 +40,19 @@ class ExportStep(AnalysisStep):
         rm.save_npy("embeddings", "realized",   cache["emb_realized"])
         rm.save_npy("clustering", "labels",      cache["clusters"])
 
-        # ── CRITIQUE : mapping stim_id → row index ──────────────
-        # realized.npy[i] correspond au stimulus dont le stim_id est
-        # stim_id_map[i]. Sans ce mapping, l'alignement
-        # perception_space est corrompu silencieusement.
+        # ── UMAP projections ─────────────────────────────────────
+        # Sauvegardées ici pour que perception_space et regression
+        # puissent réutiliser exactement la même projection visuelle.
+        if "umap_realized" in cache:
+            rm.save_npy("embeddings", "umap_2d", cache["umap_realized"])
+
+        if "umap_realized_3d" in cache:
+            rm.save_npy("embeddings", "umap_3d", cache["umap_realized_3d"])
+
+        if "umap_emergent" in cache and cache["umap_emergent"] is not None:
+            rm.save_npy("embeddings", "umap_emergent_2d", cache["umap_emergent"])
+
+        # ── Mapping stim_id → row index ──────────────────────────
         if "stim_id" in df.columns:
             stim_id_map = df["stim_id"].tolist()
         elif "id" in df.columns:
@@ -63,6 +72,8 @@ class ExportStep(AnalysisStep):
             "has_clusters":       True,
             "has_interpretation": "cluster_semantics" in cache,
             "has_stim_id_map":    True,
+            "has_umap_2d":        "umap_realized" in cache,
+            "has_umap_emergent":  "umap_emergent" in cache and cache["umap_emergent"] is not None,
         })
 
         return context
