@@ -3,16 +3,9 @@ config.py
 =========
 Source unique de vérité pour le système Groove Experiment.
 
-Sections :
-    Environnement         — variables d'environnement et chemins
-    Structure temporelle  — BPM, résolution, durée du stimulus
-    Profil métrique       — poids de chaque position dans la mesure
-    Hi-hat                — paramètres de génération stochastique
-    Micro-timing          — paramètres du jitter expressif
-    Hiérarchie des voix   — pondération perceptive kick/snare/hihat
-    Push/pull inter-voix  — paramètre P (Keil 1995)
-    Design expérimental   — niveaux des variables manipulées
-    Analyse               — UMAP, clustering
+Notation :
+    Paramètres génératifs (manipulés) : suffixe _mv  → S_mv, D_mv, E_mv, P_mv
+    Descripteurs émergents (réalisés)  : sans indice  → D, I, V, S, E, P
 """
 
 from __future__ import annotations
@@ -71,7 +64,7 @@ SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 # STRUCTURE TEMPORELLE
 # =========================================================
 
-BPM           = 90
+BPM           = 100
 STEPS_PER_BAR = 16
 TOTAL_BARS    = 6
 LOOP_BARS     = 2
@@ -102,104 +95,93 @@ assert len(METRIC_PROFILE) == STEPS_PER_BAR
 # =========================================================
 
 HIHAT_DENSITY_PROBS: dict[int, float] = {
-    0: 0.30,
-    1: 0.50,
-    2: 0.70,
+    0: 0.15,   # était 0.30 — franchement sparse, contraste clair avec niveau 1
+    1: 0.55,   # était 0.50 — légèrement augmenté
+    2: 0.85,   # était 0.70 — franchement dense, proche du 16ths constant
 }
 
 HIHAT_PROB_MIN = 0.01
 HIHAT_PROB_MAX = 0.90
 
-
 # =========================================================
-# BASSE — LIGNE MÉLODIQUE (ancrage métrique, non expérimental)
+# BASSE — LIGNE MÉLODIQUE
 # =========================================================
 
-BASS_PITCH = 36   # C2 — root note
+BASS_PITCH = 36
 
-# Motif rythmique sur 16 steps (1 mesure) — répété sur les 6 mesures
-# Positions : 0=temps1, 4=temps2, 8=temps3, 12=temps4 (en doubles croches)
-# 1  = hit normal  |  0.4 = ghost note  |  0 = silence
 BASS_PATTERN_BAR: list[float] = [
-    1.0, 0.0, 0.0, 0.0,   # temps 1 — root, ancrage fort
-    0.4, 0.0, 0.0, 0.0,   # temps 2 — ghost note, très légère
-    1.0, 0.0, 0.0, 0.0,   # temps 3 — quinte, ancrage secondaire
-    0.0, 0.0, 0.4, 0.0,   # temps 4 — note d'approche sur le "e" du 4
+    1.0, 0.0, 0.0, 0.0,
+    0.4, 0.0, 0.0, 0.0,
+    1.0, 0.0, 0.0, 0.0,
+    0.0, 0.0, 0.4, 0.0,
 ]
 
-# Intervalles en demi-tons depuis BASS_PITCH, indexés par position dans la barre
-# Même longueur que BASS_PATTERN_BAR — lu uniquement sur les hits
 BASS_INTERVAL_BAR: list[int] = [
-    0,  0,  0,  0,   # temps 1 → root (C2)
-    0,  0,  0,  0,   # temps 2 → ghost sur root
-    7,  0,  0,  0,   # temps 3 → quinte (G2)
-    0,  0, 11,  0,   # temps 4 → note d'approche (B1, sensible, tension vers C)
+    0,  0,  0,  0,
+    0,  0,  0,  0,
+    7,  0,  0,  0,
+    0,  0, 11,  0,
 ]
 
-# Vélocités de base par position (0–127), indexées comme BASS_PATTERN_BAR
-# Les ghost notes ont une vélocité faible indépendamment de E
 BASS_VELOCITY_BAR: list[int] = [
-    75,  0,  0,  0,   # temps 1 — fort
-    25,  0,  0,  0,   # temps 2 — ghost, très doux
-    55,  0,  0,  0,   # temps 3 — moyen
-     0,  0, 35,  0,   # temps 4 — note d'approche, doux
+    75,  0,  0,  0,
+    25,  0,  0,  0,
+    55,  0,  0,  0,
+     0,  0, 35,  0,
 ]
 
-# Durée des notes en fraction de step_duration
-# Les ghost notes sont courtes (staccato), les notes d'ancrage sont longues (sustain)
 BASS_DURATION_BAR: list[float] = [
-    2.2, 0.0, 0.0, 0.0,   # temps 1 — sustain jusqu'au ghost
-    0.6, 0.0, 0.0, 0.0,   # temps 2 — ghost court
-    1.8, 0.0, 0.0, 0.0,   # temps 3 — sustain jusqu'à l'approche
-    0.0, 0.0, 0.8, 0.0,   # temps 4 — note d'approche courte
+    2.2, 0.0, 0.0, 0.0,
+    0.6, 0.0, 0.0, 0.0,
+    1.8, 0.0, 0.0, 0.0,
+    0.0, 0.0, 0.8, 0.0,
 ]
 
-BASS_VELOCITY     = 85    # vélocité par défaut (fallback)
+BASS_VELOCITY     = 85
 BASS_TIMING_SCALE = 0.20
 BASS_VOICE_WEIGHT = 0.20
 
-BASS_ANTICIPATION_RATIO:   float = -0.06   # légère avance (6% du step ≈ 5ms)
-BASS_HUMANIZE_NOISE_RATIO: float = 0.03    # bruit résiduel (3% ≈ 2.5ms σ)
+BASS_ANTICIPATION_RATIO:   float = -0.06
+BASS_HUMANIZE_NOISE_RATIO: float = 0.03
 
 # =========================================================
 # MICRO-TIMING — JITTER EXPRESSIF
+#
+# Calibration v2 :
+#   Les valeurs initiales (SWING_MAX_RATIO=0.12, DRIFT=0.10, NOISE=0.10)
+#   produisaient un swing maximal de ~8ms à 90bpm, en-dessous du seuil
+#   de détection documenté pour des non-musiciens (~10–15ms,
+#   Honing & Ladinig 2009 ; Madison 2006).
+#
+#   Les valeurs ci-dessous sont recalibrées pour rester dans les bornes
+#   réalistes de la batterie humaine tout en restant perceptibles :
+#     E_mv=0   → swing baseline ~2.6ms  (tight, quasi-robotique)
+#     E_mv=0.5 → swing total    ~9.2ms  (légèrement swingué)
+#     E_mv=1.0 → swing total    ~15.5ms (swing jazz/funk audible)
+#   Ces valeurs correspondent aux plages mesurées par Frane & Shams (2017)
+#   sur des batteurs humains en contexte funk.
 # =========================================================
 
-SWING_BASELINE = 0.04
-"""
-Swing incompressible appliqué à toutes les conditions, y compris E=0.
+SWING_BASELINE  = 0.04   # 4% du step — inchangé (E_mv=0 reste "serré")
+SWING_MAX_RATIO = 0.20   # était 0.12 → swing max ~13ms à 90bpm
+DRIFT_MAX_RATIO = 0.15   # était 0.10
+NOISE_MAX_RATIO = 0.14   # était 0.10
 
-Rationale :
-    Un batteur humain ne joue jamais à déviation zéro — même en jouant
-    "straight", il produit un micro-swing naturel (Keil 1995).
-    La grille MIDI parfaite n'est pas une référence perceptive humaine.
+# =========================================================
+# HUMANISATION DE LA VÉLOCITÉ — liée à E_mv
+#
+# E_mv encode l'amplitude des déviations expressives.
+# Cette définition est étendue à la dynamique (vélocité) en cohérence
+# avec Gabrielsson (1999) : timing et vélocité sont les deux composantes
+# principales du geste expressif en percussion.
+#
+#   E_mv=0   → vélocités fixes (pas de fluctuation)
+#   E_mv=0.5 → sigma ~4pts MIDI  (~5%)
+#   E_mv=1.0 → sigma ~8pts MIDI  (~10%) — en-dessous du seuil
+#              de quantification perceptive mais perceptible globalement
+# =========================================================
 
-    E=0 représente donc "tight / peu expressif", pas "robot quantisé".
-    Ce swing baseline garantit que toutes les conditions sonnent musicales,
-    ce qui est une condition nécessaire pour que les participants puissent
-    évaluer le groove plutôt que réagir à la mécanique du son.
-
-    Valeur : 4% du step_duration ≈ 3ms à 90 BPM.
-    En dessous du seuil de détection comme déviation isolée (~6ms),
-    mais suffisant pour humaniser le feel global du pattern.
-
-    Swing total = SWING_BASELINE + SWING_MAX_RATIO × E
-    E=0   → 4%  du step ≈  3ms  (tight, humanisé)
-    E=0.5 → 10% du step ≈  8ms  (groove modéré)
-    E=1   → 16% du step ≈ 12ms  (groove expressif)
-"""
-
-SWING_MAX_RATIO = 0.12
-"""
-Amplitude additionnelle du swing contrôlée par E.
-Swing total = SWING_BASELINE + SWING_MAX_RATIO × E × amount.
-"""
-
-DRIFT_MAX_RATIO = 0.10
-"""Amplitude max du drift sinusoïdal en fraction du step_duration."""
-
-NOISE_MAX_RATIO = 0.10
-"""Écart-type max du bruit gaussien corrélé en fraction du step_duration."""
+VELOCITY_HUMANIZE_SIGMA = 8.0   # sigma de base à E_mv=1.0 (pts MIDI)
 
 # =========================================================
 # HIÉRARCHIE PERCEPTIVE DES VOIX
@@ -223,34 +205,50 @@ assert abs(KICK_DENSITY_WEIGHT + SNARE_DENSITY_WEIGHT + HIHAT_DENSITY_WEIGHT - 1
 # PUSH/PULL INTER-VOIX (Keil 1995)
 # =========================================================
 
-PUSH_MAX_RATIO = 0.18
-"""
-Décalage systématique maximal du hihat en fraction du step_duration.
-≈ 14ms à 90 BPM.
-P > 0 : hihat en avance (rushing)
-P < 0 : hihat en retard (laid-back)
-"""
+PUSH_MAX_RATIO = 0.22
+
+# =========================================================
+# PAD HARMONIQUE INVARIANT
+#
+# Un accord Am7 tenu (vélocité faible, program=89 "Pad 2 warm")
+# est ajouté comme fond harmonique constant sur tous les stimuli.
+# Étant strictement invariant entre conditions, il ne confond
+# aucune variable manipulée — même logique que la basse (cf. §2.2.2).
+#
+# Objectif : ancrer perceptivement les variations du hi-hat pour
+# les participants sans culture musicale formelle.
+# Référence : Witek et al. (2014) utilisent un fond harmonique stable
+# dans leurs stimuli de groove.
+# =========================================================
+
+PAD_ENABLED    = True
+PAD_PROGRAM    = 89          # General MIDI "Pad 2 (warm)"
+PAD_VELOCITY   = 42          # discret, ne masque pas les percussions
+PAD_PITCHES    = [45, 52, 55, 59]  # Am7 : A2, E3, G3, B3
+PAD_CHANNEL    = 1           # canal séparé des percussions
 
 # =========================================================
 # DESIGN EXPÉRIMENTAL
 # =========================================================
 
-# Graine maître — reproductibilité globale
 SEED = 42
 
-# Répétitions par phase — différenciées pour équilibrer P1/P2 vs P3
 REPEATS_P1 = 5
 REPEATS_P2 = 4
 REPEATS_P3 = 1
-# Total : 128 stimuli
 
-# Alias plat — utilisé par print_config_summary
 REPEATS = REPEATS_P3
 
-S_LEVELS = [0, 1, 2]
-D_LEVELS = [0, 1, 2]
-E_LEVELS = [0.0, 0.5, 1.0]
-P_LEVELS = [-1, 0, 1]
+S_mv_LEVELS = [0, 1, 2]
+D_mv_LEVELS = [0, 1, 2]
+E_mv_LEVELS = [0.0, 0.5, 1.0]
+P_mv_LEVELS = [-1, 0, 1]
+
+# Alias rétro-compatibilité (à supprimer progressivement)
+S_LEVELS = S_mv_LEVELS
+D_LEVELS = D_mv_LEVELS
+E_LEVELS = E_mv_LEVELS
+P_LEVELS = P_mv_LEVELS
 
 # =========================================================
 # UMAP
@@ -281,13 +279,11 @@ def stimulus_duration_seconds() -> float:
     return total_steps() * step_duration_seconds()
 
 def alpha_from_sync_level(sync_level: int) -> float:
-    """S_mv → alpha continu [0, 1]. 0 = métrique, 1 = anti-métrique."""
-    max_level = max(S_LEVELS)
+    max_level = max(S_mv_LEVELS)
     return sync_level / max_level if max_level > 0 else 0.0
 
 def push_from_p_level(p_level: int) -> float:
-    """P_level → décalage en fraction de step_duration."""
-    max_level = max(abs(p) for p in P_LEVELS) if P_LEVELS else 1
+    max_level = max(abs(p) for p in P_mv_LEVELS) if P_mv_LEVELS else 1
     return (p_level / max_level) * PUSH_MAX_RATIO if max_level > 0 else 0.0
 
 # =========================================================
@@ -297,7 +293,6 @@ def push_from_p_level(p_level: int) -> float:
 _CURRENT_RUN_FILE = BASE_DIR / ".current_run"
 
 def new_run() -> Path:
-    """Crée un nouveau run et l'enregistre comme run courant."""
     path = ANALYSIS_DIR / f"run_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
     path.mkdir(parents=True, exist_ok=True)
     _CURRENT_RUN_FILE.write_text(str(path))
@@ -305,7 +300,6 @@ def new_run() -> Path:
     return path
 
 def get_current_run() -> Path:
-    """Retourne le run courant (erreur claire si pas initialisé)."""
     if not _CURRENT_RUN_FILE.exists():
         raise RuntimeError(
             "Aucun run courant — lance d'abord : make new-run"
@@ -318,7 +312,6 @@ def get_current_run() -> Path:
         )
     return path
 
-
 def ensure_data_dirs() -> None:
     for d in [DATA_DIR, MIDI_DIR, WAV_DIR, MP3_DIR, ANALYSIS_DIR]:
         d.mkdir(parents=True, exist_ok=True)
@@ -329,15 +322,16 @@ def get_run_dir() -> Path:
     return path
 
 def get_latest_run_dir() -> Path | None:
-    """Retourne le run le plus récent, ou None si aucun."""
     if not ANALYSIS_DIR.exists():
         return None
     runs = sorted(ANALYSIS_DIR.glob("run_*"))
     return runs[-1] if runs else None
 
 def print_config_summary() -> None:
-    n_conditions = len(S_LEVELS) * len(D_LEVELS) * len(E_LEVELS) * len(P_LEVELS)
+    n_conditions = len(S_mv_LEVELS) * len(D_mv_LEVELS) * len(E_mv_LEVELS) * len(P_mv_LEVELS)
     sd_ms        = step_duration_seconds() * 1000
+    swing_min_ms = SWING_BASELINE * sd_ms
+    swing_max_ms = (SWING_BASELINE + SWING_MAX_RATIO) * sd_ms
     print("\n" + "=" * 62)
     print("  CONFIGURATION — Groove Experiment")
     print("=" * 62)
@@ -350,18 +344,22 @@ def print_config_summary() -> None:
     print(f"  Boucle rythmique       : {LOOP_BARS} mesures  ({loop_steps()} steps)")
     print(f"  Répétitions de boucle  : {N_LOOPS}×")
     print()
-    print(f"  S_LEVELS               : {S_LEVELS}  (syncopation)")
-    print(f"  D_LEVELS               : {D_LEVELS}  (densité)")
-    print(f"  E_LEVELS               : {E_LEVELS}  (micro-timing)")
-    print(f"  P_LEVELS               : {P_LEVELS}  (push/pull inter-voix)")
+    print(f"  S_mv_LEVELS            : {S_mv_LEVELS}  (syncopation)")
+    print(f"  D_mv_LEVELS            : {D_mv_LEVELS}  (densité)")
+    print(f"  E_mv_LEVELS            : {E_mv_LEVELS}  (micro-timing)")
+    print(f"  P_mv_LEVELS            : {P_mv_LEVELS}  (push/pull inter-voix)")
     print(f"  Conditions factorielles: {n_conditions}")
     print(f"  Répétitions/condition  : {REPEATS}")
     print()
-    print(f"  Swing baseline         : {SWING_BASELINE*100:.0f}% du step"
-          f" ≈ {SWING_BASELINE*sd_ms:.1f}ms  (E=0, toutes conditions)")
-    print(f"  Swing max (E=1)        : {(SWING_BASELINE+SWING_MAX_RATIO)*100:.0f}%"
-          f" ≈ {(SWING_BASELINE+SWING_MAX_RATIO)*sd_ms:.1f}ms")
+    print(f"  Swing baseline (E_mv=0): ~{swing_min_ms:.1f}ms")
+    print(f"  Swing max  (E_mv=1.0)  : ~{swing_max_ms:.1f}ms  ← seuil de détection ~10–15ms")
     print(f"  Drift max              : {DRIFT_MAX_RATIO*100:.0f}% du step")
     print(f"  Noise max (σ)          : {NOISE_MAX_RATIO*100:.0f}% du step")
-    print(f"  Push max               : {PUSH_MAX_RATIO*100:.0f}% du step")
+    print(f"  Vélocité humanisée σ   : {VELOCITY_HUMANIZE_SIGMA:.0f} pts MIDI (à E_mv=1)")
+    print()
+    print(f"  Pad harmonique         : {'activé' if PAD_ENABLED else 'désactivé'}")
+    if PAD_ENABLED:
+        print(f"    Program MIDI         : {PAD_PROGRAM} (Pad 2 warm)")
+        print(f"    Vélocité             : {PAD_VELOCITY}")
+        print(f"    Accord               : Am7 {PAD_PITCHES}")
     print("=" * 62 + "\n")

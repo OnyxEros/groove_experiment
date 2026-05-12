@@ -16,15 +16,15 @@ const WAVEFORM_HEIGHTS = [3, 6, 9, 13, 9, 15, 9, 6, 11, 15, 9, 6, 11, 7, 4];
    ══════════════════════════════════════════════════════════ */
 
 const state = {
-  participantId:   null,
-  stimuli:         [],
-  idx:             0,
-  startTime:       0,
-  isSending:       false,
-  player:          null,
-  listenedSeconds: 0,
-  // Fix #2 : on garde une référence au preload courant pour le détruire
-  preloadPlayer:   null,
+  participantId:      null,
+  stimuli:            [],
+  idx:                0,
+  startTime:          0,
+  isSending:          false,
+  player:             null,
+  listenedSeconds:    0,
+  preloadPlayer:      null,
+  musicalBackground:  null,
 };
 
 
@@ -104,7 +104,7 @@ async function init() {
 
 
 /* ══════════════════════════════════════════════════════════
-   TIRAGE STRATIFIÉ S_mv × D_mv × E
+   TIRAGE STRATIFIÉ S_mv × D_mv × E_mv
    ══════════════════════════════════════════════════════════ */
 
 function selectStratified(pool, n) {
@@ -115,12 +115,11 @@ function selectStratified(pool, n) {
     return pool.slice(0, n);
   }
 
-  // Une entrée par cellule du design (sans doublons)
-  const cells   = new Map();
+  const cells     = new Map();
   const pickedIds = new Set();
 
   for (const stim of pool) {
-    const key = `${stim.S_mv}_${stim.D_mv}_${stim.E}`;
+    const key = `${stim.S_mv}_${stim.D_mv}_${stim.E_mv ?? stim.E}`;
     if (!cells.has(key)) cells.set(key, []);
     cells.get(key).push(stim);
   }
@@ -133,7 +132,6 @@ function selectStratified(pool, n) {
     pickedIds.add(_stimKey(stim));
   }
 
-  // Fix #4 : fallback sans doublons
   if (picked.length < n) {
     const remaining = pool.filter(s => !pickedIds.has(_stimKey(s)));
     shuffle(remaining);
@@ -165,7 +163,27 @@ function onConsentChange() {
   if (cb && btn) btn.disabled = !cb.checked;
 }
 
-function goIntro() {
+function goBackground() {
+  showScreen('screen-background');
+}
+
+function submitBackground() {
+  const selected = document.querySelector('input[name="bg"]:checked');
+  if (!selected) return;
+  state.musicalBackground = selected.value;
+
+  const btn = document.getElementById('bg-btn');
+  if (btn) btn.disabled = true;
+
+  _goIntro();
+}
+
+function onBgChange() {
+  const btn = document.getElementById('bg-btn');
+  if (btn) btn.disabled = false;
+}
+
+function _goIntro() {
   showScreen('screen-intro');
   loadExample();
 }
@@ -186,7 +204,13 @@ function startExperiment() {
 }
 
 function showScreen(id) {
-  ['screen-consent', 'screen-intro', 'screen-calib', 'screen-task'].forEach(sid => {
+  [
+    'screen-consent',
+    'screen-background',
+    'screen-intro',
+    'screen-calib',
+    'screen-task',
+  ].forEach(sid => {
     const el = document.getElementById(sid);
     if (el) el.style.display = 'none';
   });
@@ -199,10 +223,10 @@ function showScreen(id) {
 
 
 /* ══════════════════════════════════════════════════════════
-   EXAMPLE PLAYER
+   EXAMPLE PLAYER (groove fort)
    ══════════════════════════════════════════════════════════ */
 
-let _exPlayer = null;
+let _exPlayer    = null;
 
 function loadExample() {
   const container = document.getElementById('example-container');
@@ -211,29 +235,12 @@ function loadExample() {
   fetch('/example')
     .then(r => r.json())
     .then(s => {
-      container.innerHTML = `
-        <div class="player" id="ex-player">
-          <button class="play-btn" id="ex-play-btn" onclick="toggleExample()">▶</button>
-          <div class="player-info">
-            <div class="player-meta">
-              <span class="player-title">Exemple — groove fort</span>
-              <span class="player-time" id="ex-time">--:--</span>
-            </div>
-            <div class="player-bar-track">
-              <div class="player-bar-fill" id="ex-fill"></div>
-            </div>
-            <div class="waveform">${buildWaveform()}</div>
-          </div>
-        </div>`;
-
+      container.innerHTML = _buildExamplePlayer(
+        'ex', s.audio_url, 'Exemple A — forte envie de bouger', 'toggleExample'
+      );
       _exPlayer = new AudioPlayer(s.audio_url, {
-        onProgress: (ct, dur) => {
-          const fill = document.getElementById('ex-fill');
-          const t    = document.getElementById('ex-time');
-          if (fill && dur) fill.style.width = (ct / dur * 100) + '%';
-          if (t)           t.textContent    = formatTime(ct);
-        },
-        onEnded: () => _setExPlayState(false),
+        onProgress: (ct, dur) => _updatePlayerBar('ex', ct, dur),
+        onEnded:    () => _setPlayState('ex', false),
       });
     })
     .catch(() => {
@@ -243,24 +250,53 @@ function loadExample() {
 }
 
 function toggleExample() {
-  if (!_exPlayer) return;
-  if (_exPlayer.paused) {
-    _exPlayer.play().then(() => _setExPlayState(true)).catch(() => {});
+  _togglePlayer(_exPlayer, 'ex', b => _setPlayState('ex', b));
+}
+
+function _togglePlayer(player, prefix, onState) {
+  if (!player) return;
+  if (player.paused) {
+    player.play().then(() => onState(true)).catch(() => {});
   } else {
-    _exPlayer.pause();
-    _setExPlayState(false);
+    player.pause();
+    onState(false);
   }
 }
 
-function _setExPlayState(playing) {
-  const btn    = document.getElementById('ex-play-btn');
-  const player = document.getElementById('ex-player');
+function _setPlayState(prefix, playing) {
+  const btn    = document.getElementById(`${prefix}-play-btn`);
+  const player = document.getElementById(`${prefix}-player`);
   if (btn)    { btn.textContent = playing ? '⏸' : '▶'; btn.classList.toggle('playing', playing); }
   if (player) player.classList.toggle('playing', playing);
 }
 
+function _updatePlayerBar(prefix, ct, dur) {
+  const fill = document.getElementById(`${prefix}-fill`);
+  const t    = document.getElementById(`${prefix}-time`);
+  if (fill && dur) fill.style.width = (ct / dur * 100) + '%';
+  if (t)           t.textContent    = formatTime(ct);
+}
+
 function stopExample() {
   if (_exPlayer) { _exPlayer.destroy(); _exPlayer = null; }
+}
+
+function _buildExamplePlayer(prefix, url, title, toggleFn) {
+  return `
+    <div class="player" id="${prefix}-player">
+      <button class="play-btn" id="${prefix}-play-btn"
+              onclick="${toggleFn}()" aria-label="Lecture / Pause">▶</button>
+      <div class="player-info">
+        <div class="player-meta">
+          <span class="player-title">${title}</span>
+          <span class="player-time" id="${prefix}-time">--:--</span>
+        </div>
+        <div class="player-bar-track">
+          <div class="player-bar-fill" id="${prefix}-fill"></div>
+        </div>
+        <div class="waveform">${buildWaveform()}</div>
+      </div>
+    </div>`;
 }
 
 
@@ -280,7 +316,6 @@ function render() {
 
   _updateProgress(pct, state.idx + 1, state.stimuli.length);
 
-  // Fix #2 : précharge le suivant via AudioPlayer (avec destroy propre)
   if (state.idx + 1 < state.stimuli.length) {
     preloadOne(state.stimuli[state.idx + 1]);
   }
@@ -415,17 +450,18 @@ async function send() {
   const rt = (Date.now() - state.startTime) / 1000;
 
   const payload = {
-    participant_id:   state.participantId,
-    stim_id:          s.stim_id || s.audio_file || String(state.idx),
-    groove:           Number(document.getElementById('g').value),
-    complexity:       Number(document.getElementById('c').value),
-    rt:               parseFloat(rt.toFixed(3)),
-    rt_type:          'response',
-    trial_index:      state.idx,
-    session_id:       state.participantId,
-    condition:        'main',
-    listen_duration:  listenDuration,
-    timestamp_client: Date.now(),
+    participant_id:      state.participantId,
+    stim_id:             s.stim_id || s.audio_file || String(state.idx),
+    groove:              Number(document.getElementById('g').value),
+    complexity:          Number(document.getElementById('c').value),
+    rt:                  parseFloat(rt.toFixed(3)),
+    rt_type:             'response',
+    trial_index:         state.idx,
+    session_id:          state.participantId,
+    condition:           'main',
+    listen_duration:     listenDuration,
+    musical_background:  state.musicalBackground,
+    timestamp_client:    Date.now(),
   };
 
   try {
@@ -486,7 +522,8 @@ function buildTrialHTML(s, i) {
   return `
     <div>
       <div class="player waiting" id="player">
-        <button class="play-btn" id="play-btn" onclick="togglePlay()" aria-label="Lecture / Pause">▶</button>
+        <button class="play-btn" id="play-btn" onclick="togglePlay()"
+                aria-label="Lecture / Pause">▶</button>
         <div class="player-info">
           <div class="player-meta">
             <span class="player-title">Extrait ${i + 1}</span>
@@ -501,26 +538,38 @@ function buildTrialHTML(s, i) {
 
       <div class="autoplay-hint" id="autoplay-hint">▶ Appuie sur le bouton pour écouter</div>
 
+      <!-- ── Slider groove : reformulé selon Madison (2006) / Witek et al. (2014) ── -->
       <div class="slider-block">
         <div class="slider-header">
-          <span class="slider-label">Groove</span>
+          <span class="slider-label">Envie de bouger</span>
           <span class="slider-pill" id="gv">4</span>
         </div>
-        <div class="slider-anchors">
-          <span>Faible</span><span>Modéré</span><span>Fort</span>
+        <div class="slider-hint">
+          Avais-tu envie de hocher la tête, taper du pied, danser ?
         </div>
-        <input type="range" id="g" min="1" max="7" value="4" oninput="syncSlider(this,'gv')">
+        <div class="slider-anchors">
+          <span>Aucune envie</span>
+          <span>Forte envie</span>
+        </div>
+        <input type="range" id="g" min="1" max="7" value="4"
+               oninput="syncSlider(this,'gv')">
       </div>
 
+      <!-- ── Slider complexité ── -->
       <div class="slider-block">
         <div class="slider-header">
           <span class="slider-label">Complexité</span>
           <span class="slider-pill" id="cv">4</span>
         </div>
-        <div class="slider-anchors">
-          <span>Simple</span><span>Modérée</span><span>Complexe</span>
+        <div class="slider-hint">
+          Le rythme te semblait-il simple ou complexe à suivre ?
         </div>
-        <input type="range" id="c" min="1" max="7" value="4" oninput="syncSlider(this,'cv')">
+        <div class="slider-anchors">
+          <span>Très simple</span>
+          <span>Très complexe</span>
+        </div>
+        <input type="range" id="c" min="1" max="7" value="4"
+               oninput="syncSlider(this,'cv')">
       </div>
 
       <button class="btn" onclick="send()" id="btn" disabled>
@@ -578,7 +627,6 @@ function shuffle(a) {
   return a;
 }
 
-// Fix #2 : preloadOne utilise AudioPlayer pour cleanup propre
 function preloadOne(s) {
   if (!s?.audio_url) return;
   if (state.preloadPlayer) {
@@ -611,13 +659,10 @@ function showError(msg) {
 
 
 /* ══════════════════════════════════════════════════════════
-   BOOT — Fix #3 : un seul DOMContentLoaded ici
-   Le listener dans index.html est supprimé
+   BOOT
    ══════════════════════════════════════════════════════════ */
 
 document.addEventListener('DOMContentLoaded', () => {
   showScreen('screen-consent');
   init();
-  // loadExample() est appelé par goIntro() quand le participant
-  // valide le consentement — pas au boot
 });

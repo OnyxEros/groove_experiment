@@ -3,15 +3,15 @@ perception_space/viz/geometry_plots.py
 ======================================
 Figures publication-ready pour la géométrie locale de l'espace perceptif.
 
-Corrections v2 :
-    - plot_condition_stats : groove_col paramétrable (plus de "groove_mean" hardcodé)
+Notation :
+    Paramètres génératifs : S_mv, D_mv, E_mv, P_mv
+    Descripteurs émergents : D, I, V, S, E, P
 """
 
 from __future__ import annotations
 
 import numpy as np
 import matplotlib.pyplot as plt
-import matplotlib.gridspec as gridspec
 import matplotlib.patches as mpatches
 from pathlib import Path
 
@@ -78,14 +78,8 @@ def plot_local_geometry(
 
         sc = ax.scatter(
             emb[:, 0], emb[:, 1],
-            c=values,
-            cmap=cmap,
-            vmin=vmin, vmax=vmax,
-            s=45,
-            alpha=0.80,
-            linewidths=0.3,
-            edgecolors="white",
-            zorder=3,
+            c=values, cmap=cmap, vmin=vmin, vmax=vmax,
+            s=45, alpha=0.80, linewidths=0.3, edgecolors="white", zorder=3,
         )
 
         cbar = fig.colorbar(sc, ax=ax, fraction=0.046, pad=0.04, shrink=0.85)
@@ -127,34 +121,17 @@ def plot_permutation_test(
     p_value    = perm_result["p_value"]
     sig        = perm_result.get("significant", p_value < 0.05)
 
-    ax.hist(
-        null_dist,
-        bins=40,
-        color=_GRAY,
-        alpha=0.65,
-        edgecolor="white",
-        linewidth=0.5,
-        label="Distribution nulle (permutations)",
-    )
+    ax.hist(null_dist, bins=40, color=_GRAY, alpha=0.65,
+            edgecolor="white", linewidth=0.5,
+            label="Distribution nulle (permutations)")
 
     color_obs = _RED if sig else _ORANGE
-    ax.axvline(
-        observed_r,
-        color=color_obs,
-        linewidth=2.5,
-        zorder=5,
-        label=f"r observé = {observed_r:.3f}",
-    )
+    ax.axvline(observed_r, color=color_obs, linewidth=2.5, zorder=5,
+               label=f"r observé = {observed_r:.3f}")
 
     thresh = float(np.percentile(null_dist, 95))
-    ax.axvline(
-        thresh,
-        color=_BLUE,
-        linewidth=1.5,
-        linestyle="--",
-        alpha=0.8,
-        label=f"Seuil 95% = {thresh:.3f}",
-    )
+    ax.axvline(thresh, color=_BLUE, linewidth=1.5, linestyle="--", alpha=0.8,
+               label=f"Seuil 95% = {thresh:.3f}")
 
     x_fill = null_dist[null_dist >= thresh]
     if len(x_fill):
@@ -164,9 +141,7 @@ def plot_permutation_test(
     ax.text(
         0.97, 0.95,
         f"p = {p_value:.3f}  ({sig_txt})\nn = {perm_result['n_permutations']} permutations",
-        transform=ax.transAxes,
-        ha="right", va="top",
-        fontsize=8.5,
+        transform=ax.transAxes, ha="right", va="top", fontsize=8.5,
         bbox=dict(boxstyle="round,pad=0.4", facecolor="white",
                   edgecolor="#cccccc", alpha=0.9),
     )
@@ -186,34 +161,31 @@ def plot_permutation_test(
 
 
 # =========================================================
-# FIGURE 3 — Stats par condition
+# FIGURE 3 — Stats par condition de design (paramètres génératifs)
 # =========================================================
 
 def plot_condition_stats(
     condition_stats: "pd.DataFrame",
     anova_results: "pd.DataFrame",
-    groove_col: str = "groove_mean",     # v2 : paramétrable
+    groove_col: str = "groove_mean",
     out_path: Path | None = None,
 ) -> plt.Figure:
     """
-    Moyennes groove ± CI95 pour chaque variable de design.
+    Moyennes groove ± CI95 pour chaque paramètre génératif de design.
 
-    Args:
-        condition_stats : DataFrame joint (meta × ratings agrégés)
-        anova_results   : retour de kruskal_by_condition v2
-        groove_col      : nom de la colonne target (configurable)
+    Cherche S_mv, D_mv, E_mv, P_mv (notation actuelle).
     """
     import pandas as pd
     plt.rcParams.update(_RC)
 
-    conditions = [c for c in ["S_mv", "D_mv", "E", "P"]
+    # Paramètres génératifs — nouvelle notation
+    conditions = [c for c in ["S_mv", "D_mv", "E_mv", "P_mv"]
                   if c in condition_stats.columns]
 
     n_panels = len(conditions)
     if n_panels == 0:
         return None
 
-    # Vérifie que groove_col existe dans le df
     if groove_col not in condition_stats.columns:
         available = [c for c in condition_stats.columns if "groove" in c.lower()]
         if available:
@@ -226,15 +198,13 @@ def plot_condition_stats(
     if n_panels == 1:
         axes = [axes]
 
-    fig.subplots_adjust(
-        wspace=0.35, left=0.10, right=0.97, top=0.88, bottom=0.14
-    )
+    fig.subplots_adjust(wspace=0.35, left=0.10, right=0.97, top=0.88, bottom=0.14)
 
     labels_map = {
         "S_mv": "Syncopation ($S_{mv}$)",
         "D_mv": "Densité ($D_{mv}$)",
-        "E":    "Micro-timing ($E$)",
-        "P":    "Push/pull ($P$)",
+        "E_mv": "Micro-timing ($E_{mv}$)",
+        "P_mv": "Push/pull ($P_{mv}$)",
     }
 
     colors = [_BLUE, _GREEN, _ORANGE, _RED]
@@ -248,21 +218,19 @@ def plot_condition_stats(
         )
         grp["ci95"] = 1.96 * grp["std"] / np.sqrt(grp["count"])
 
-        x    = grp[cond].values
+        x     = grp[cond].values
         means = grp["mean"].values
         ci95  = grp["ci95"].values
 
         bar_width = 0.6 * (x[1] - x[0]) if len(x) > 1 else 0.4
         ax.bar(x, means, color=color, alpha=0.75, width=bar_width, zorder=3)
         ax.errorbar(x, means, yerr=ci95,
-                    fmt="none", color="#333333",
-                    capsize=5, linewidth=1.5, zorder=4)
+                    fmt="none", color="#333333", capsize=5, linewidth=1.5, zorder=4)
 
         for xi, mi in zip(x, means):
             ax.text(xi, mi + 0.05, f"{mi:.2f}",
                     ha="center", va="bottom", fontsize=7.5)
 
-        # Annotation test statistique (v2 : colonne "statistic" générique)
         if anova_results is not None and not anova_results.empty:
             row = anova_results[anova_results["condition"] == cond]
             if not row.empty:
@@ -276,9 +244,7 @@ def plot_condition_stats(
                 ax.text(
                     0.97, 0.97,
                     f"η² = {et2:.3f}  {sig}\np = {p:.3f}\n{test_name}={stat_val:.2f}",
-                    transform=ax.transAxes,
-                    ha="right", va="top",
-                    fontsize=7.5,
+                    transform=ax.transAxes, ha="right", va="top", fontsize=7.5,
                     bbox=dict(boxstyle="round,pad=0.3", facecolor="white",
                               edgecolor="#cccccc", alpha=0.9),
                 )

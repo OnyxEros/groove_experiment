@@ -4,15 +4,15 @@ from analysis.embeddings.base import BaseEmbedding
 
 class RealizedEmbedding(BaseEmbedding):
     """
-    Embedding sur les descripteurs réalisés.
+    Embedding sur les descripteurs émergents (réalisés).
 
-    Vecteur : [D, I, V, S_real, E_real, P_real]
-    P_real optionnel (rétro-compatible si absent du DataFrame).
+    Vecteur : [D, I, V, S, E, P]
+    P optionnel (rétro-compatible si absent du DataFrame).
     """
 
     name = "realized"
 
-    COLS = ["D", "I", "V", "S_real", "E_real", "P_real"]
+    COLS = ["D", "I", "V", "S", "E", "P"]
 
     def compute(self, df, cache=None):
         cols = [c for c in self.COLS if c in df.columns]

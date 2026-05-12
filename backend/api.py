@@ -19,7 +19,6 @@ from backend.models import Response
 from backend.startup import check_environment
 from infra.supabase_client import insert_response
 
-# ── Design system (optionnel) ─────────────────────────────
 try:
     from backend.design.registry import StimulusRegistry
     DESIGN_MODE = True
@@ -30,15 +29,10 @@ except Exception:
 # =========================================================
 # RATE LIMITER
 # =========================================================
-# Stratégie à deux niveaux :
-#   1. Redis (si REDIS_URL présent) → fonctionne multi-worker
-#   2. In-memory fallback           → single-worker, suffit pour Render Free
-# =========================================================
 
 RATE_LIMIT_REQUESTS = 60
-RATE_LIMIT_WINDOW   = 60   # secondes
+RATE_LIMIT_WINDOW   = 60
 
-# ── Tentative Redis ───────────────────────────────────────
 _redis = None
 _REDIS_URL = os.getenv("REDIS_URL")
 
@@ -52,18 +46,11 @@ if _REDIS_URL:
     except Exception as e:
         print(f"⚠️  Redis indisponible ({e}) — fallback in-memory")
 
-# ── In-memory fallback ────────────────────────────────────
 _rate_store: dict[str, list[float]] = defaultdict(list)
 
 
 async def _check_rate_limit(client_ip: str) -> None:
-    """
-    Rate limiter asynchrone.
-    Redis (sliding window via ZADD/ZREMRANGEBYSCORE) si disponible,
-    sinon liste in-memory (suffisant pour un seul worker Render).
-    """
     if _redis:
-        # Sliding window avec Redis sorted set
         now      = time.time()
         key      = f"rl:{client_ip}"
         pipe     = _redis.pipeline()
@@ -74,7 +61,6 @@ async def _check_rate_limit(client_ip: str) -> None:
         results  = await pipe.execute()
         count    = results[2]
     else:
-        # In-memory (single-worker)
         now          = time.monotonic()
         window_start = now - RATE_LIMIT_WINDOW
         hits         = _rate_store[client_ip]
@@ -95,14 +81,12 @@ async def _check_rate_limit(client_ip: str) -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # ── Startup ───────────────────────────────────────────
     check_environment()
 
     df = pd.read_csv(METADATA_PATH)
     df["audio_file"] = df["mp3_path"].apply(lambda p: Path(p).name)
     app.state.df_global = df
 
-    # Index des stim_id valides pour validation côté serveur
     if "stim_id" in df.columns:
         app.state.valid_stim_ids = set(df["stim_id"].astype(str))
     elif "id" in df.columns:
@@ -129,7 +113,6 @@ async def lifespan(app: FastAPI):
 
     yield
 
-    # ── Shutdown ──────────────────────────────────────────
     _rate_store.clear()
     if _redis:
         await _redis.aclose()
@@ -142,7 +125,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="Groove Study API",
-    version="2.1.0",
+    version="2.3.0",
     lifespan=lifespan,
 )
 
@@ -192,8 +175,6 @@ def _df_hash() -> int:
 # ENDPOINTS
 # =========================================================
 
-# ── Healthcheck ───────────────────────────────────────────
-
 @app.get("/health", tags=["system"])
 async def health(request: Request):
     await _check_rate_limit(_client_ip(request))
@@ -207,8 +188,6 @@ async def health(request: Request):
     }
 
 
-# ── Participant ───────────────────────────────────────────
-
 @app.get("/new_participant", tags=["session"])
 async def new_participant(request: Request):
     await _check_rate_limit(_client_ip(request))
@@ -217,8 +196,6 @@ async def new_participant(request: Request):
         "timestamp":      datetime.now(timezone.utc).isoformat(),
     }
 
-
-# ── Stimuli ───────────────────────────────────────────────
 
 @app.get("/stimuli", tags=["experiment"])
 async def get_stimuli(
@@ -239,25 +216,41 @@ async def get_stimuli(
     return _cached_stimuli_from_df(_df_hash(), n)
 
 
-# ── Example ───────────────────────────────────────────────
-
 @app.get("/example", tags=["experiment"])
 async def get_example(request: Request):
+    """
+    Retourne le stimulus d'exemple (groove fort).
+
+    Post-refactor notation :
+        - On filtre sur E_mv (paramètre génératif micro-timing) = 1.0
+          et S_mv (syncopation manipulée) = 2 pour garantir un groove fort.
+        - Fallback : stimulus avec la syncopation réalisée (S) maximale.
+        - S_real n'existe plus — remplacé par S (descripteur émergent).
+    """
     await _check_rate_limit(_client_ip(request))
 
     df: pd.DataFrame = app.state.df_global
 
-    required = {"S_mv", "D_mv", "E", "S_real"}
-    if not required.issubset(df.columns):
-        row = df.iloc[0]
-    else:
-        mask       = (df["S_mv"] == 2) & (df["D_mv"] == 2) & (df["E"] == 1.0)
+    # Sélection d'un exemple à groove élevé
+    # Utilise S_mv et E_mv (génératifs) pour le filtre — toujours présents
+    has_design_cols = {"S_mv", "D_mv", "E_mv"}.issubset(df.columns)
+
+    if has_design_cols:
+        mask       = (df["S_mv"] == 2) & (df["D_mv"] == 2) & (df["E_mv"] == 1.0)
         candidates = df[mask]
-        row        = (
-            candidates.loc[candidates["S_real"].idxmax()]
-            if not candidates.empty
-            else df.loc[df["S_real"].idxmax()]
-        )
+
+        if not candidates.empty:
+            # Parmi les candidats, prendre celui avec la syncopation émergente max
+            # S est le descripteur émergent (anciennement S_real)
+            if "S" in candidates.columns:
+                row = candidates.loc[candidates["S"].idxmax()]
+            else:
+                row = candidates.iloc[0]
+        else:
+            # Fallback : S_mv le plus élevé
+            row = df.loc[df["S_mv"].idxmax()]
+    else:
+        row = df.iloc[0]
 
     audio_file = (
         row["audio_file"]
@@ -267,20 +260,17 @@ async def get_example(request: Request):
 
     return {
         "audio_url": f"/audio/{audio_file}",
-        "stim_id":   str(row.get("id", "unknown")),
-        "S_mv":      int(row["S_mv"])   if "S_mv" in row else None,
-        "D_mv":      int(row["D_mv"])   if "D_mv" in row else None,
-        "E":         float(row["E"])    if "E"    in row else None,
+        "stim_id":   str(row.get("stim_id", row.get("id", "unknown"))),
+        "S_mv":      int(row["S_mv"])   if "S_mv"  in row else None,
+        "D_mv":      int(row["D_mv"])   if "D_mv"  in row else None,
+        "E_mv":      float(row["E_mv"]) if "E_mv"  in row else None,
     }
 
-
-# ── Response → Supabase ───────────────────────────────────
 
 @app.post("/response", tags=["experiment"])
 async def save_response(resp: Response, request: Request):
     await _check_rate_limit(_client_ip(request))
 
-    # ── Validation stim_id côté serveur ──────────────────
     valid_ids = getattr(app.state, "valid_stim_ids", set())
     if valid_ids and resp.stim_id not in valid_ids:
         raise HTTPException(
@@ -291,18 +281,18 @@ async def save_response(resp: Response, request: Request):
     row = resp.model_dump()
 
     clean_row: dict[str, Any] = {
-        "participant_id":  row["participant_id"],
-        "stim_id":         row["stim_id"],
-        "groove":          row["groove"],
-        "complexity":      row["complexity"],
-        "rt":              row["rt"],
-        "rt_type":         row.get("rt_type"),
-        "trial_index":     row.get("trial_index"),
-        "session_id":      row.get("session_id"),
-        "condition":       row.get("condition"),
-        # ── Fix : listen_duration maintenant sauvegardé ──
-        "listen_duration": row.get("listen_duration"),
-        "created_at":      datetime.now(timezone.utc).isoformat(),
+        "participant_id":     row["participant_id"],
+        "stim_id":            row["stim_id"],
+        "groove":             row["groove"],
+        "complexity":         row["complexity"],
+        "rt":                 row["rt"],
+        "rt_type":            row.get("rt_type"),
+        "trial_index":        row.get("trial_index"),
+        "session_id":         row.get("session_id"),
+        "condition":          row.get("condition"),
+        "listen_duration":    row.get("listen_duration"),
+        "musical_background": row.get("musical_background"),
+        "created_at":         datetime.now(timezone.utc).isoformat(),
     }
 
     try:
@@ -317,14 +307,10 @@ async def save_response(resp: Response, request: Request):
     return {"status": "ok"}
 
 
-# ── Frontend ──────────────────────────────────────────────
-
 @app.get("/", include_in_schema=False)
 def home():
     return FileResponse(INDEX_PATH)
 
-
-# ── Global error handler ──────────────────────────────────
 
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):

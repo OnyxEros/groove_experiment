@@ -3,10 +3,15 @@ audio/midi_export.py
 ====================
 Export MIDI des stimuli générés.
 
-Vélocités : si le stimulus contient des vecteurs *_vel (v3+), ils sont utilisés.
-Sinon fallback sur une vélocité fixe par voix (rétro-compatible v1/v2).
-Les vélocités fixes par défaut reflètent la hiérarchie perceptive :
-kick (95) > snare (90) > hihat (75).
+Vélocités : les vélocités sont désormais portées par le stim lui-même
+(kick_vel, snare_vel, hihat_vel, bass_vel) et humanisées par MicroTiming
+selon E_mv. Fallback sur les constantes DEFAULT_VELOCITY si absent (rétro-compat).
+
+Pad harmonique :
+    Un accord Am7 tenu est ajouté comme couche invariante sur tous les stimuli
+    (config.PAD_ENABLED). Étant strictement constant entre conditions, il ne
+    confond aucune variable manipulée — même logique que la basse (cf. §2.2.2).
+    Référence : Witek et al. (2014) utilisent un fond harmonique stable.
 """
 
 import pretty_midi
@@ -18,7 +23,7 @@ import config
 
 
 # =========================================================
-# VELOCITÉS PAR DÉFAUT (fallback si pas de *_vel dans le stim)
+# VÉLOCITÉS PAR DÉFAUT (fallback si pas de *_vel dans le stim)
 # =========================================================
 
 DEFAULT_VELOCITY = {
@@ -45,6 +50,8 @@ class MIDIExporter:
             "hihat": 42,
         }
 
+    # ── Voix percussives ──────────────────────────────────
+
     def build_track(
         self,
         pattern:     np.ndarray,
@@ -60,8 +67,8 @@ class MIDIExporter:
             pattern     : pattern binaire (0/1)
             jitter      : décalages temporels en secondes
             pitch       : numéro MIDI fixe pour tous les hits
-            vel         : vecteur de vélocités optionnel (0–127)
-            default_vel : vélocité fixe si vel est None
+            vel         : vecteur de vélocités (0–127) — humanisé si fourni
+            default_vel : vélocité fixe si vel est None (rétro-compat)
         """
         if len(pattern) != len(jitter):
             raise ValueError("Pattern et jitter doivent avoir la même longueur")
@@ -81,7 +88,6 @@ class MIDIExporter:
             ))
         return notes
 
-
     def build_bass_track(
         self,
         pattern:     np.ndarray,
@@ -90,18 +96,13 @@ class MIDIExporter:
         vel_array:   np.ndarray,
         dur_array:   np.ndarray,
     ) -> list[pretty_midi.Note]:
-        """
-        Basse avec pitch, vélocité et durée variables par step.
-
-        Les ghost notes (pattern < 1.0 mais > 0) sont incluses avec
-        leur vélocité propre — pas de seuil binaire.
-        """
+        """Basse avec pitch, vélocité et durée variables par step."""
         notes = []
         for i, hit in enumerate(pattern):
             if hit <= 0.0:
                 continue
             start    = max(0.0, i * self.step_duration + jitter[i])
-            duration = max(self.step_duration * 0.1, dur_array[i])   # durée min 10%
+            duration = max(self.step_duration * 0.1, dur_array[i])
             end      = start + duration
             velocity = int(np.clip(vel_array[i], 1, 127))
             notes.append(pretty_midi.Note(
@@ -111,6 +112,43 @@ class MIDIExporter:
                 end=end,
             ))
         return notes
+
+    # ── Pad harmonique invariant ──────────────────────────
+
+    def build_pad_track(
+        self,
+        total_duration: float,
+    ) -> pretty_midi.Instrument:
+        """
+        Construit le pad harmonique Am7 invariant.
+
+        Accord Am7 = A2 (45), E3 (52), G3 (55), B3 (59)
+        Tenu sur toute la durée du stimulus, vélocité faible (config.PAD_VELOCITY).
+
+        Le pad est strictement constant entre tous les stimuli :
+        il ne porte aucune information différentielle entre conditions
+        et ne peut donc pas confondre les variables manipulées.
+        """
+        inst = pretty_midi.Instrument(
+            program=config.PAD_PROGRAM,
+            is_drum=False,
+            name="Pad Am7",
+        )
+
+        start = 0.0
+        end   = total_duration
+
+        for pitch in config.PAD_PITCHES:
+            inst.notes.append(pretty_midi.Note(
+                velocity=config.PAD_VELOCITY,
+                pitch=pitch,
+                start=start,
+                end=end,
+            ))
+
+        return inst
+
+    # ── Export principal ──────────────────────────────────
 
     def export(self, stim: dict, filename) -> None:
         pm = pretty_midi.PrettyMIDI(initial_tempo=self.bpm)
@@ -124,9 +162,12 @@ class MIDIExporter:
                     f"{len(stim[name])} != {expected_steps}"
                 )
 
+        # ── Percussions ───────────────────────────────────
         for name in ("kick", "snare", "hihat"):
             inst      = pretty_midi.Instrument(program=0, is_drum=True)
-            vel_array = stim.get(f"{name}_vel", None)   # None si absent (v1/v2)
+            # Préférence aux vélocités humanisées du stim (v2),
+            # fallback sur DEFAULT_VELOCITY (rétro-compat v1)
+            vel_array = stim.get(f"{name}_vel", None)
 
             inst.notes = self.build_track(
                 stim[name],
@@ -137,8 +178,8 @@ class MIDIExporter:
             )
             pm.instruments.append(inst)
 
-        # ── Basse (canal instrument, program 33 = Finger Bass) ─
-        bass_inst = pretty_midi.Instrument(program=33, is_drum=False)
+        # ── Basse ─────────────────────────────────────────
+        bass_inst = pretty_midi.Instrument(program=33, is_drum=False, name="Bass")
         bass_inst.notes = self.build_bass_track(
             stim["bass"],
             stim["bass_jitter"],
@@ -147,6 +188,12 @@ class MIDIExporter:
             dur_array=stim["bass_dur"],
         )
         pm.instruments.append(bass_inst)
+
+        # ── Pad harmonique invariant ──────────────────────
+        if config.PAD_ENABLED:
+            total_dur = config.stimulus_duration_seconds()
+            pad_inst  = self.build_pad_track(total_dur)
+            pm.instruments.append(pad_inst)
 
         pm.write(str(filename))
 

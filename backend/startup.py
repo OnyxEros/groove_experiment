@@ -2,8 +2,8 @@ from pathlib import Path
 from config import ensure_data_dirs, MP3_DIR, METADATA_PATH
 import pandas as pd
 
-
-REQUIRED_COLUMNS = {"mp3_path", "S_mv", "D_mv", "E", "S_real"}
+# Colonnes requises dans metadata.csv (nouvelle notation)
+REQUIRED_COLUMNS = {"mp3_path", "S_mv", "D_mv", "E_mv", "S"}
 
 
 def check_environment() -> dict:
@@ -25,7 +25,6 @@ def check_environment() -> dict:
         if not mp3_files:
             errors.append(f"Aucun fichier .mp3 dans {MP3_DIR}")
         else:
-            # Vérifie les fichiers corrompus (taille 0)
             empty = [f for f in mp3_files if f.stat().st_size == 0]
             if empty:
                 warnings.append(f"{len(empty)} fichier(s) MP3 vide(s) détecté(s)")
@@ -44,17 +43,26 @@ def check_environment() -> dict:
             if df.empty:
                 errors.append("metadata.csv est vide")
             else:
-                missing_cols = REQUIRED_COLUMNS - set(df.columns)
+                # Rétro-compat : accepte aussi S_real à la place de S
+                effective_cols = set(df.columns)
+                if "S_real" in effective_cols and "S" not in effective_cols:
+                    effective_cols.add("S")   # sera renommé par normalize_columns
+                if "E_real" in effective_cols and "E_mv" not in effective_cols:
+                    # E_real → E (émergent), pas E_mv
+                    pass
+
+                missing_cols = REQUIRED_COLUMNS - effective_cols
                 if missing_cols:
                     warnings.append(
                         f"Colonnes absentes dans metadata.csv : {', '.join(sorted(missing_cols))}"
                     )
 
                 # Vérifie les valeurs nulles sur les colonnes critiques
-                for col in ("mp3_path", "S_real"):
-                    if col in df.columns and df[col].isnull().any():
-                        n = df[col].isnull().sum()
-                        warnings.append(f"{n} valeur(s) nulle(s) dans la colonne '{col}'")
+                for col in ("mp3_path", "S"):
+                    actual_col = "S_real" if col == "S" and "S_real" in df.columns else col
+                    if actual_col in df.columns and df[actual_col].isnull().any():
+                        n = df[actual_col].isnull().sum()
+                        warnings.append(f"{n} valeur(s) nulle(s) dans la colonne '{actual_col}'")
 
     # ── Résultat ─────────────────────────────────────────────
     if errors:

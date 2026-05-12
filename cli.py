@@ -3,11 +3,9 @@ cli.py
 ======
 Point d'entrée unique du système Groove Experiment.
 
-Design :
-    - Imports lourds uniquement à l'intérieur des fonctions (démarrage rapide)
-    - Chaque commande est une fonction autonome avec dry_run natif
-    - Le nothing-check est exhaustif (tous les flags listés)
-    - Les erreurs sont catchées proprement avec safe_exit
+Notation :
+    Paramètres génératifs : S_mv, D_mv, E_mv, P_mv
+    Descripteurs émergents : D, I, V, S, E, P
 """
 
 from __future__ import annotations
@@ -20,9 +18,6 @@ import traceback
 from contextlib import contextmanager
 from pathlib import Path
 
-# =========================================================
-# RICH  (optionnel — pip install rich)
-# =========================================================
 try:
     from rich.console import Console
     from rich.table import Table
@@ -31,24 +26,11 @@ try:
 except ImportError:
     _RICH = False
 
-# =========================================================
-# CONFIG  (imports légers uniquement)
-# =========================================================
 from config import (
-    ANALYSIS_DIR,
-    METADATA_PATH,
-    MIDI_DIR,
-    MP3_DIR,
-    PREVIEW_DIR,
-    RESP_FILE,
-    SOUNDFONT_PATH,
-    WAV_DIR,
+    ANALYSIS_DIR, METADATA_PATH, MIDI_DIR, MP3_DIR,
+    PREVIEW_DIR, RESP_FILE, SOUNDFONT_PATH, WAV_DIR,
     ensure_data_dirs,
 )
-
-# =========================================================
-# CONSOLE
-# =========================================================
 
 _console = Console() if _RICH else None
 
@@ -86,13 +68,8 @@ def safe_exit(msg: str, code: int = 1) -> None:
     sys.exit(code)
 
 
-# =========================================================
-# STEP CONTEXT MANAGER  (spinner + timer)
-# =========================================================
-
 @contextmanager
 def step(label: str, dry_run: bool = False):
-    """Affiche un spinner pendant l'exécution d'une étape."""
     if dry_run:
         if _RICH:
             _console.print(f"  [dim]DRY-RUN[/dim] [cyan]{label}[/cyan]")
@@ -116,9 +93,7 @@ def step(label: str, dry_run: bool = False):
                 yield
             except Exception:
                 elapsed = time.perf_counter() - start
-                _console.print(
-                    f"  ❌ [red]{label}[/red] failed after {elapsed:.1f}s"
-                )
+                _console.print(f"  ❌ [red]{label}[/red] failed after {elapsed:.1f}s")
                 _console.print_exception(show_locals=False)
                 raise
     else:
@@ -133,9 +108,7 @@ def step(label: str, dry_run: bool = False):
 
     elapsed = time.perf_counter() - start
     if _RICH:
-        _console.print(
-            f"  ✔  [green]{label}[/green] [dim]({elapsed:.1f}s)[/dim]"
-        )
+        _console.print(f"  ✔  [green]{label}[/green] [dim]({elapsed:.1f}s)[/dim]")
     else:
         print(f"  ✔  {label} ({elapsed:.1f}s)")
 
@@ -167,29 +140,23 @@ def _check_deps() -> dict[str, bool]:
 # =========================================================
 
 def cmd_status() -> None:
-    """Affiche l'état du système (répertoires, dépendances, cache)."""
     if not _RICH:
         print("Status requires `rich`.  Install with: pip install rich")
         return
 
-    table = Table(
-        title="🎧  Groove System Status",
-        show_header=True,
-        header_style="bold magenta",
-    )
-    table.add_column("Component",    style="cyan",  min_width=18)
-    table.add_column("Path / Info",  style="dim",   min_width=40)
-    table.add_column("Status",       justify="center")
+    table = Table(title="🎧  Groove System Status", show_header=True, header_style="bold magenta")
+    table.add_column("Component",   style="cyan",  min_width=18)
+    table.add_column("Path / Info", style="dim",   min_width=40)
+    table.add_column("Status",      justify="center")
 
-    # ── Répertoires ──────────────────────────────────────
     dirs = {
-        "MIDI dir":    MIDI_DIR,
-        "WAV dir":     WAV_DIR,
-        "MP3 dir":     MP3_DIR,
-        "Preview dir": PREVIEW_DIR,
-        "Analysis dir":ANALYSIS_DIR,
-        "Metadata":    METADATA_PATH,
-        "SoundFont":   Path(SOUNDFONT_PATH),
+        "MIDI dir":     MIDI_DIR,
+        "WAV dir":      WAV_DIR,
+        "MP3 dir":      MP3_DIR,
+        "Preview dir":  PREVIEW_DIR,
+        "Analysis dir": ANALYSIS_DIR,
+        "Metadata":     METADATA_PATH,
+        "SoundFont":    Path(SOUNDFONT_PATH),
     }
     for name, path in dirs.items():
         exists = path.exists()
@@ -203,29 +170,22 @@ def cmd_status() -> None:
             extra = f" ({size/1024:.0f} KB)"
         table.add_row(name, str(path) + extra, badge)
 
-    # ── Réponses Supabase ────────────────────────────────
     resp = Path(RESP_FILE)
     if resp.exists():
         try:
             import pandas as pd
             n = len(pd.read_csv(resp))
-            table.add_row(
-                "responses.csv", str(resp),
-                f"[green]✔  ({n} rows)[/green]",
-            )
+            table.add_row("responses.csv", str(resp), f"[green]✔  ({n} rows)[/green]")
         except Exception:
             table.add_row("responses.csv", str(resp), "[yellow]⚠  unreadable[/yellow]")
     else:
         table.add_row("responses.csv", str(resp), "[dim]–  (not fetched)[/dim]")
 
-    # ── Dernier run d'analyse ────────────────────────────
     if ANALYSIS_DIR.exists():
         runs = sorted(ANALYSIS_DIR.iterdir())
         if runs:
-            latest = runs[-1]
-            table.add_row("Latest run", str(latest.name), "[green]✔[/green]")
+            table.add_row("Latest run", str(runs[-1].name), "[green]✔[/green]")
 
-    # ── Dépendances Python ───────────────────────────────
     table.add_section()
     for pkg, ok in _check_deps().items():
         badge = "[green]✔[/green]" if ok else "[yellow]–  (optional)[/yellow]"
@@ -239,14 +199,10 @@ def cmd_status() -> None:
 # =========================================================
 
 def cmd_clean(targets: list[str], dry_run: bool = False) -> None:
-    """Nettoie les cibles spécifiées."""
     if not targets:
         targets = ["all"]
 
-    _print(
-        f"🧹  Clean targets: {targets}" + (" [DRY-RUN]" if dry_run else ""),
-        style="yellow",
-    )
+    _print(f"🧹  Clean targets: {targets}" + (" [DRY-RUN]" if dry_run else ""), style="yellow")
 
     dispatch = {
         "outputs":   _clean_outputs,
@@ -299,7 +255,6 @@ def _clean_analysis(subdirs: list[str] | None = None) -> None:
     if subdirs is None:
         shutil.rmtree(ANALYSIS_DIR)
         _print(f"  removed {ANALYSIS_DIR}", style="dim")
-        # effacer le pointeur — il pointe vers un dossier qui n'existe plus
         from config import _CURRENT_RUN_FILE
         if _CURRENT_RUN_FILE.exists():
             _CURRENT_RUN_FILE.unlink()
@@ -309,6 +264,7 @@ def _clean_analysis(subdirs: list[str] | None = None) -> None:
             p = ANALYSIS_DIR / sub
             if p.exists():
                 shutil.rmtree(p)
+
 
 def _clean_pycache() -> None:
     removed = 0
@@ -331,17 +287,9 @@ def _clean_pycache() -> None:
 # GENERATION
 # =========================================================
 
-def cmd_generate(
-    seed:       int,
-    n_repeats:  int | None,
-    skip_audio: bool = False,
-    dry_run:    bool = False,
-) -> None:
-    """Génère les stimuli, les exports MIDI, rend l'audio et sauve metadata.csv."""
+def cmd_generate(seed: int, n_repeats: int | None, skip_audio: bool = False, dry_run: bool = False) -> None:
     if dry_run:
         _print("🎛️   [DRY-RUN] Generation pipeline — nothing will be written")
-        for label in ["run_experiment", "export MIDI", "render audio (WAV→MP3)", "build dataset"]:
-            _print(f"  → {label}", style="dim")
         return
 
     from groove.generator import run_experiment
@@ -361,17 +309,10 @@ def cmd_generate(
         _warn("Audio rendering skipped (--skip-audio)")
     else:
         if not _check_soundfont():
-            safe_exit(
-                f"SoundFont not found: {SOUNDFONT_PATH}\n"
-                "Use --skip-audio to bypass audio rendering."
-            )
+            safe_exit(f"SoundFont not found: {SOUNDFONT_PATH}\nUse --skip-audio to bypass.")
         with step("Render audio  (WAV → MP3)"):
-            convert_all(
-                midi_root=MIDI_DIR,
-                wav_root=WAV_DIR,
-                mp3_root=MP3_DIR,
-                soundfont=str(SOUNDFONT_PATH),
-            )
+            convert_all(midi_root=MIDI_DIR, wav_root=WAV_DIR, mp3_root=MP3_DIR,
+                        soundfont=str(SOUNDFONT_PATH))
 
     with step("Build dataset"):
         df = build_audio_map(df, mp3_root=MP3_DIR)
@@ -386,7 +327,6 @@ def cmd_generate(
 # =========================================================
 
 def cmd_preview(seed: int = 42, dry_run: bool = False) -> None:
-    """Génère 3 stimuli de preview (baseline, swing, syncopated)."""
     if dry_run:
         _print("🎧  [DRY-RUN] Preview skipped")
         return
@@ -398,9 +338,9 @@ def cmd_preview(seed: int = 42, dry_run: bool = False) -> None:
     from audio.mp3 import convert_all
 
     configs = [
-        {"name": "baseline",   "S_mv": 0, "D_mv": 1, "E": 0.0},
-        {"name": "swing",      "S_mv": 0, "D_mv": 1, "E": 0.5},
-        {"name": "syncopated", "S_mv": 2, "D_mv": 1, "E": 0.0},
+        {"name": "baseline",   "S_mv": 0, "D_mv": 1, "E_mv": 0.0, "P_mv": 0},
+        {"name": "swing",      "S_mv": 0, "D_mv": 1, "E_mv": 0.5, "P_mv": 0},
+        {"name": "syncopated", "S_mv": 2, "D_mv": 1, "E_mv": 0.0, "P_mv": 0},
     ]
 
     with step("Build preview stimuli"):
@@ -422,12 +362,8 @@ def cmd_preview(seed: int = 42, dry_run: bool = False) -> None:
         export_all(df, cache, out_dir=PREVIEW_DIR)
 
     with step("Render preview audio"):
-        convert_all(
-            midi_root=PREVIEW_DIR,
-            wav_root=PREVIEW_DIR / "wav",
-            mp3_root=PREVIEW_DIR / "mp3",
-            soundfont=str(SOUNDFONT_PATH),
-        )
+        convert_all(midi_root=PREVIEW_DIR, wav_root=PREVIEW_DIR / "wav",
+                    mp3_root=PREVIEW_DIR / "mp3", soundfont=str(SOUNDFONT_PATH))
 
     _print(f"✔  Preview ready → {PREVIEW_DIR / 'mp3'}")
 
@@ -441,16 +377,12 @@ def cmd_new_run() -> None:
     run_dir = new_run()
     _print(f"✔  Run courant : {run_dir}")
 
+
 # =========================================================
 # ANALYSIS
 # =========================================================
 
-def cmd_analysis(
-    mode:    str = "audio",
-    steps:   list[str] | None = None,
-    dry_run: bool = False,
-) -> None:
-    """Lance le pipeline d'analyse (embeddings, clustering, viz…)."""
+def cmd_analysis(mode: str = "audio", steps: list[str] | None = None, dry_run: bool = False) -> None:
     if dry_run:
         _print(f"🧠  [DRY-RUN] Analysis — mode={mode}, steps={steps or 'default'}")
         return
@@ -462,14 +394,10 @@ def cmd_analysis(
 
 
 # =========================================================
-# SYNC  (Supabase → cache local)
+# SYNC
 # =========================================================
 
 def cmd_sync(dry_run: bool = False) -> None:
-    """
-    Fetch les réponses depuis Supabase et écrit data/responses.csv.
-    N'écrit JAMAIS vers Supabase.
-    """
     if dry_run:
         _print("☁️   [DRY-RUN] Fetch Supabase → local cache")
         return
@@ -495,13 +423,8 @@ def cmd_sync(dry_run: bool = False) -> None:
 # REGRESSION
 # =========================================================
 
-def cmd_regression(
-    feature_set: str  = "all",
-    refresh:     bool = False,
-    check_db:    bool = True,
-    dry_run:     bool = False,
-) -> None:
-    """Lance la régression groove (Ridge + RandomForest) sur un feature set."""
+def cmd_regression(feature_set: str = "all", refresh: bool = False,
+                   check_db: bool = True, dry_run: bool = False) -> None:
     if dry_run:
         _print(f"📈  [DRY-RUN] Regression — features={feature_set}")
         return
@@ -509,30 +432,18 @@ def cmd_regression(
     from regression.run import run_regression
 
     with step(f"Regression  [features={feature_set}]"):
-        result = run_regression(
-            feature_set=feature_set,
-            refresh=refresh,
-            check_db=check_db,
-        )
+        result = run_regression(feature_set=feature_set, refresh=refresh, check_db=check_db)
 
-    r2 = result.get("best_r2")
+    r2   = result.get("best_r2")
     best = result.get("best_model", "?")
-    _print(
-        f"✔  Regression done — best={best}"
-        + (f"  R²={r2:.3f}" if r2 is not None else ""),
-    )
+    _print(f"✔  Regression done — best={best}" + (f"  R²={r2:.3f}" if r2 is not None else ""))
 
 
-def cmd_regression_all(
-    refresh:  bool = False,
-    check_db: bool = True,
-    dry_run:  bool = False,
-) -> None:
-    """Lance les 3 feature sets en séquence (pour le mémoire)."""
+def cmd_regression_all(refresh: bool = False, check_db: bool = True, dry_run: bool = False) -> None:
     for fs in ("design", "acoustic", "all"):
         cmd_regression(
             feature_set=fs,
-            refresh=(refresh and fs == "design"),  # re-fetch une seule fois
+            refresh=(refresh and fs == "design"),
             check_db=(check_db and fs == "design"),
             dry_run=dry_run,
         )
@@ -543,7 +454,6 @@ def cmd_regression_all(
 # =========================================================
 
 def cmd_perception(refresh: bool = False, dry_run: bool = False) -> None:
-    """Aligne l'espace latent avec les ratings perceptifs."""
     if dry_run:
         _print("🧠  [DRY-RUN] Perception alignment skipped")
         return
@@ -560,7 +470,9 @@ def cmd_perception(refresh: bool = False, dry_run: bool = False) -> None:
         df = load_perceptual_dataset(embedding_df=meta, refresh=refresh)
 
     with step("Fit alignment  (Ridge latent → groove)"):
-        feature_cols = [c for c in ["D", "I", "V", "S_real", "E_real"] if c in df.columns]
+        # Descripteurs émergents (nouvelle notation, sans indice)
+        # S_real → S, E_real → E ont été renommés dans load_dataset
+        feature_cols = [c for c in ["D", "I", "V", "S", "E"] if c in df.columns]
         model, score = fit_alignment(df[feature_cols].values, df["groove_mean"].values)
 
     r2 = score.get("r2_cv_mean", score.get("r2"))
@@ -588,14 +500,9 @@ def cmd_perception_space(refresh: bool = False, dry_run: bool = False) -> None:
             "complexity_mean": "complexity",
         })
 
-        # ── NE PAS caster en int — run_perception_space gère
-        # la normalisation du format stim_id (str "stim_0042" ou "42")
         df["stimulus_id"] = df["stimulus_id"].astype(str)
-
-        # groove requis — on droppe si absent
         df = df.dropna(subset=["groove"])
 
-        # complexity optionnelle — on impute avec la médiane
         if "complexity" in df.columns and df["complexity"].isna().any():
             df["complexity"] = df["complexity"].fillna(df["complexity"].median())
 
@@ -604,18 +511,18 @@ def cmd_perception_space(refresh: bool = False, dry_run: bool = False) -> None:
 
     _print("✔  Perception space computed")
 
+
 # =========================================================
-# DOCTOR  (diagnostic complet)
+# DOCTOR
 # =========================================================
 
 def cmd_doctor() -> None:
-    """Diagnostic Supabase + variables d'environnement."""
     from perception.check_supabase import check_supabase
-    from utils.env_check import run_env_check  # type: ignore[import]
+    from utils.env_check import run_env_check
 
     _print("🩺  Running diagnostics…", style="cyan")
     ok_db  = check_supabase(refresh=False, verbose=True)
-    ok_env = run_env_check()  # type: ignore[call-arg]
+    ok_env = run_env_check()
 
     if ok_db and ok_env:
         _print("✔  All checks passed")
@@ -627,15 +534,6 @@ def cmd_doctor() -> None:
 # =========================================================
 # ARGUMENT PARSER
 # =========================================================
-def _resolve_run_dir(create: bool = False) -> Path | None:
-    """
-    create=True  → nouveau run (pour --analysis)
-    create=False → dernier run existant (pour --regression, --perception-space)
-    """
-    from config import get_run_dir, get_latest_run_dir
-    if create:
-        return get_run_dir()
-    return get_latest_run_dir()
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
@@ -662,83 +560,50 @@ QUICK REFERENCE
 """,
     )
 
-    # ── Pipeline ─────────────────────────────────────────
     g = parser.add_argument_group("Pipeline")
-    g.add_argument("--generate",      action="store_true", help="Generate stimuli (MIDI + audio + metadata.csv)")
-    g.add_argument("--analysis",      action="store_true", help="Run analysis pipeline (embeddings, clustering, viz)")
-    g.add_argument("--analysis-only", action="store_true", help="Alias for --analysis")
-    g.add_argument("--preview",       action="store_true", help="Generate 3 preview stimuli (baseline / swing / syncopated)")
+    g.add_argument("--generate",      action="store_true")
+    g.add_argument("--analysis",      action="store_true")
+    g.add_argument("--analysis-only", action="store_true")
+    g.add_argument("--preview",       action="store_true")
 
-    # ── Generation ───────────────────────────────────────
     g = parser.add_argument_group("Generation options")
-    g.add_argument("--seed",       type=int, default=42,   metavar="N",  help="Master random seed (default: 42)")
-    g.add_argument("--repeats",    type=int, default=None, metavar="N",  help="Repeats per condition (default: config.REPEATS)")
-    g.add_argument("--skip-audio", action="store_true",                  help="Skip WAV/MP3 rendering (faster, no SoundFont needed)")
+    g.add_argument("--seed",       type=int, default=42,   metavar="N")
+    g.add_argument("--repeats",    type=int, default=None, metavar="N")
+    g.add_argument("--skip-audio", action="store_true")
+    g.add_argument("--new-run",    action="store_true")
 
-    # ── Dossier Run ─────────────────────────────────────────
-    g.add_argument("--new-run", action="store_true", help="Crée un nouveau dossier de run et le définit comme courant")
-
-    # ── Analysis ─────────────────────────────────────────
     g = parser.add_argument_group("Analysis options")
-    g.add_argument(
-        "--analysis-mode",
-        default="audio",
-        choices=["full", "audio", "groove"],
-        metavar="MODE",
-        help="Pipeline mode: full | audio | groove  (default: audio)",
-    )
-    g.add_argument(
-        "--steps",
-        nargs="+",
-        metavar="STEP",
-        help="Override pipeline steps (e.g. embeddings projection clustering viz export)",
-    )
+    g.add_argument("--analysis-mode", default="audio",
+                   choices=["full", "audio", "groove"], metavar="MODE")
+    g.add_argument("--steps", nargs="+", metavar="STEP")
 
-    # ── Modelling ────────────────────────────────────────
     g = parser.add_argument_group("Modelling")
-    g.add_argument("--regression",     action="store_true", help="Run regression for one feature set (see --feature-set)")
-    g.add_argument("--regression-all", action="store_true", help="Run regression for ALL feature sets (design / acoustic / all) — thesis mode")
-    g.add_argument(
-        "--feature-set",
-        default="all",
-        choices=["design", "acoustic", "all"],
-        metavar="FS",
-        help="Feature set for --regression: design | acoustic | all  (default: all)",
-    )
-    g.add_argument("--perception",       action="store_true", help="Run perceptual alignment (latent space → groove ratings)")
-    g.add_argument("--perception-space", action="store_true", help="Run geometric analysis of groove in UMAP latent space")
-    g.add_argument("--no-check-db",      action="store_true", help="Skip Supabase connectivity check before regression (faster offline)")
+    g.add_argument("--regression",     action="store_true")
+    g.add_argument("--regression-all", action="store_true")
+    g.add_argument("--feature-set",    default="all",
+                   choices=["design", "acoustic", "all"], metavar="FS")
+    g.add_argument("--perception",       action="store_true")
+    g.add_argument("--perception-space", action="store_true")
+    g.add_argument("--no-check-db",      action="store_true")
 
-    # ── Infra ────────────────────────────────────────────
     g = parser.add_argument_group("Infra")
-    g.add_argument("--sync",    action="store_true", help="Fetch Supabase responses → data/responses.csv (read-only)")
-    g.add_argument("--refresh", action="store_true", help="Force re-fetch from Supabase even if local cache exists")
+    g.add_argument("--sync",    action="store_true")
+    g.add_argument("--refresh", action="store_true")
 
-    # ── Maintenance ──────────────────────────────────────
     g = parser.add_argument_group("Maintenance")
-    g.add_argument(
-        "--clean",
-        nargs="*",
-        choices=["all", "outputs", "metadata", "responses", "analysis", "cache"],
-        metavar="TARGET",
-        help="Clean targets: all | outputs | metadata | responses | analysis | cache",
-    )
-    g.add_argument("--status",  action="store_true", help="Print system status (dirs, deps, cache)")
-    g.add_argument("--doctor",  action="store_true", help="Run Supabase + env diagnostic")
-    g.add_argument("--dry-run", action="store_true", help="Show what would run without executing anything")
+    g.add_argument("--clean",   nargs="*",
+                   choices=["all", "outputs", "metadata", "responses", "analysis", "cache"],
+                   metavar="TARGET")
+    g.add_argument("--status",  action="store_true")
+    g.add_argument("--doctor",  action="store_true")
+    g.add_argument("--dry-run", action="store_true")
 
     return parser
 
 
-# =========================================================
-# MAIN
-# =========================================================
-
-# Flags qui comptent comme "quelque chose est spécifié"
 _ACTION_FLAGS = {
     "generate", "analysis", "analysis_only",
-    "preview",
-    "new_run",              
+    "preview", "new_run",
     "regression", "regression_all",
     "perception", "perception_space",
     "sync",
@@ -753,7 +618,6 @@ def main() -> None:
     if dry:
         _print("🔍  DRY-RUN — nothing will be written or executed", style="bold yellow")
 
-    # ── Commandes standalone (retour immédiat) ────────────
     if args.status:
         cmd_status()
         return
@@ -771,62 +635,34 @@ def main() -> None:
         cmd_preview(seed=args.seed, dry_run=dry)
         return
 
-    # ── Rien de spécifié → aide ───────────────────────────
     if not any(getattr(args, f, False) for f in _ACTION_FLAGS):
         parser.print_help()
         return
 
-    # ── Séquence pipeline ─────────────────────────────────
-
-    # 1. Génération
     if args.generate:
-        cmd_generate(
-            seed=args.seed,
-            n_repeats=args.repeats,
-            skip_audio=args.skip_audio,
-            dry_run=dry,
-        )
+        cmd_generate(seed=args.seed, n_repeats=args.repeats,
+                     skip_audio=args.skip_audio, dry_run=dry)
 
-
-    # 2.0 création dossier de run
     if args.new_run:
         cmd_new_run()
         return
 
-    # 2. Analyse
     if args.analysis or args.analysis_only:
-        cmd_analysis(
-            mode=args.analysis_mode,
-            steps=args.steps,
-            dry_run=dry,
-        )
+        cmd_analysis(mode=args.analysis_mode, steps=args.steps, dry_run=dry)
 
-    # 3. Sync Supabase
     if args.sync:
         cmd_sync(dry_run=dry)
 
-    # 4. Régression (un feature set)
     if args.regression:
-        cmd_regression(
-            feature_set=args.feature_set,
-            refresh=args.refresh,
-            check_db=not args.no_check_db,
-            dry_run=dry,
-        )
+        cmd_regression(feature_set=args.feature_set, refresh=args.refresh,
+                       check_db=not args.no_check_db, dry_run=dry)
 
-    # 5. Régression (tous les feature sets — mode mémoire)
     if args.regression_all:
-        cmd_regression_all(
-            refresh=args.refresh,
-            check_db=not args.no_check_db,
-            dry_run=dry,
-        )
+        cmd_regression_all(refresh=args.refresh, check_db=not args.no_check_db, dry_run=dry)
 
-    # 6. Alignement perceptif
     if args.perception:
         cmd_perception(refresh=args.refresh, dry_run=dry)
 
-    # 7. Géométrie espace perceptif
     if args.perception_space:
         cmd_perception_space(refresh=args.refresh, dry_run=dry)
 

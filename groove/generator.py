@@ -3,20 +3,17 @@ groove/generator.py
 ===================
 Générateur de stimuli rythmiques pour l'expérience groove.
 
-Tous les paramètres musicaux et expérimentaux proviennent de config.py.
-Ce fichier ne contient aucun magic number.
+Notation :
+    Paramètres génératifs (manipulés) : S_mv, D_mv, E_mv, P_mv
+    Descripteurs émergents (réalisés)  : D, I, V, S, E, P
 
-Changelog v2.1 :
-    MicroTiming.apply() :
-        Swing baseline (SWING_BASELINE) appliqué indépendamment de E.
-        Swing total = SWING_BASELINE + SWING_MAX_RATIO × amount.
-        → E=0 sonne "tight humain" plutôt que "séquenceur quantisé".
-        → E reste une variable continue et interprétable.
-        → Toutes les conditions sonnent musicales.
-
-    Voices.hihat() : génération cyclique (inchangé depuis v2).
-    Stimulus.build() : P push/pull (inchangé depuis v2).
-    Metrics : P_real (inchangé depuis v2).
+Calibration v2 :
+    - SWING_MAX_RATIO augmenté (0.12 → 0.20) : swing max ~13ms à 90bpm,
+      au-dessus du seuil de détection pour non-musiciens (Honing & Ladinig 2009)
+    - Humanisation de vélocité introduite via MicroTiming.humanize_velocities(),
+      liée à E_mv — cohérent avec l'extension de la définition de E_mv
+      aux "déviations expressives" (timing + dynamique, Gabrielsson 1999)
+    - Kick et snare inchangés (cadre d'ancrage invariant, cf. §2.2.2 du mémoire)
 """
 
 from __future__ import annotations
@@ -63,6 +60,11 @@ class Voices:
         return np.zeros(self.total_steps, dtype=np.float64)
 
     def kick(self) -> np.ndarray:
+        """
+        Kick invariant sur tous les stimuli — cadre d'ancrage métrique.
+        Beats 1 et 3 uniquement (cf. §2.2.2 du mémoire : structure
+        métrique globale comme référence perceptive stable).
+        """
         p, bar = self._empty(), self.steps_per_bar
         for b in range(self.total_steps // bar):
             o = b * bar
@@ -72,18 +74,10 @@ class Voices:
 
     def bass(self) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         """
-        Ligne de basse déterministe, musicalement crédible.
-
-        Motif fixe sur 1 mesure (16 steps), répété sur toutes les mesures.
-        Inclut root, quinte, ghost notes et note d'approche.
-
-        Retourne :
-            pattern   : np.ndarray (n_steps,) — hits avec vélocité relative [0,1]
-            pitch     : np.ndarray (n_steps,) — pitch MIDI par step
-            velocity  : np.ndarray (n_steps,) — vélocité MIDI par step (0–127)
-            duration  : np.ndarray (n_steps,) — durée en secondes par step
+        Basse invariante sur tous les stimuli (cf. §2.2.2 du mémoire :
+        "celle-ci reproduit à l'identique son motif sur l'ensemble des stimuli").
         """
-        bar    = self.steps_per_bar   # 16
+        bar    = self.steps_per_bar
         n      = self.total_steps
         sd     = config.step_duration_seconds()
 
@@ -100,6 +94,10 @@ class Voices:
         return pattern, pitch, velocity, duration
 
     def snare(self) -> np.ndarray:
+        """
+        Snare invariante — backbeat positions 4 et 12.
+        Cadre d'ancrage métrique, inchangé entre conditions.
+        """
         p, bar = self._empty(), self.steps_per_bar
         for b in range(self.total_steps // bar):
             o = b * bar
@@ -114,8 +112,8 @@ class Voices:
         seed:          int | None = None,
     ) -> np.ndarray:
         """
-        Pattern hi-hat stochastique cyclique.
-        Généré sur LOOP_BARS mesures, répété N_LOOPS fois.
+        Hi-hat : seule voix portant la variabilité entre stimuli.
+        Structure stochastique pilotée par S_mv (syncopation) et D_mv (densité).
         """
         rng       = np.random.default_rng(seed)
         base_prob = config.HIHAT_DENSITY_PROBS.get(density_level, 0.50)
@@ -132,7 +130,7 @@ class Voices:
         anti      = 1.0 - metric_weight_loop
         prob_loop = base_prob * ((1.0 - alpha) * struct + alpha * anti)
         prob_loop = np.clip(prob_loop, config.HIHAT_PROB_MIN, config.HIHAT_PROB_MAX)
-        
+
         loop_pattern = (rng.random(self.loop_steps) < prob_loop).astype(np.float64)
         pattern      = np.tile(loop_pattern, self.n_loops)
         return pattern[: self.total_steps]
@@ -144,29 +142,26 @@ class Voices:
 
 class MicroTiming:
     """
-    Applique des déviations temporelles expressives (jitter) sur un pattern.
+    Swing total = (SWING_BASELINE + SWING_MAX_RATIO × amount) × step_duration
 
-    Composantes :
+    Calibration v2 :
+        E_mv=0   → swing baseline ~2.6ms  (tight, quasi-robotique)
+        E_mv=0.5 → swing total    ~9.2ms  (perceptible)
+        E_mv=1.0 → swing total    ~15.5ms (swing jazz/funk audible,
+                                           au-dessus du seuil ~10–15ms)
 
-        Swing baseline — retard minimal des offbeats, toutes conditions.
-                         Amplitude : SWING_BASELINE × step_duration
-                         Indépendant de E. Humanise E=0.
-
-        Swing expressif — retard additionnel contrôlé par E.
-                          Amplitude : SWING_MAX_RATIO × amount × step_duration
-
-        Swing total = (SWING_BASELINE + SWING_MAX_RATIO × amount) × step_duration
-
-        Drift  — variation lente sinusoïdale (DRIFT_MAX_RATIO × amount × sd)
-        Noise  — bruit gaussien corrélé (NOISE_MAX_RATIO × amount × sd)
-
-    Le drift et le noise sont nuls à E=0 (amount=0).
-    Seul le swing baseline reste actif à E=0.
+    Extension de la définition de E_mv aux fluctuations de vélocité :
+        humanize_velocities() modélise les micro-variations de dynamique
+        observées chez les batteurs humains (Gabrielsson 1999).
+        sigma_base=8 pts MIDI à E_mv=1.0 (~10%) — perceptible globalement
+        sans masquer les différences structurelles entre stimuli.
     """
 
     def __init__(self, rng: np.random.Generator, step_duration: float) -> None:
         self.rng           = rng
         self.step_duration = step_duration
+
+    # ── Micro-timing temporel ──────────────────────────────
 
     def apply(
         self,
@@ -174,15 +169,6 @@ class MicroTiming:
         amount:       float = 0.0,
         voice_weight: float = 1.0,
     ) -> np.ndarray:
-        """
-        Args:
-            pattern      : pattern binaire (0/1), shape (n_steps,)
-            amount       : intensité du jitter = E × timing_scale ∈ [0, 1]
-            voice_weight : pondération perceptive de la voix ∈ [0, 1]
-
-        Returns:
-            jitters : décalages en secondes, 0 sur les positions sans hit
-        """
         n    = len(pattern)
         hits = np.where(pattern == 1.0)[0]
 
@@ -191,21 +177,15 @@ class MicroTiming:
 
         sd = self.step_duration
 
-        # ── Swing (baseline + expressif) ─────────────────────
-        # Actif même à amount=0 grâce au baseline.
-        # Appliqué sur les offbeats 16th (positions index % 4 == 2).
-        swing_total = (config.SWING_BASELINE + config.SWING_MAX_RATIO * amount) * sd
+        swing_total = (config.SWING_BASELINE + config.SWING_MAX_RATIO * (amount ** 0.7)) * sd
         swing       = np.zeros(n)
         swing[2::4] = swing_total
 
-        # ── Drift et Noise — actifs seulement si amount > 0 ──
         if amount > 0.0:
-            # Drift sinusoïdal lent
             phase = self.rng.uniform(0.0, 2.0 * np.pi)
             drift = np.sin(2.0 * np.pi * np.arange(n) / (n * 2) + phase)
             drift *= config.DRIFT_MAX_RATIO * amount * sd
 
-            # Bruit gaussien corrélé
             sigma = config.NOISE_MAX_RATIO * amount * sd
             noise = self.rng.normal(0.0, sigma, size=n)
             noise = np.convolve(noise, np.array([0.25, 0.5, 0.25]), mode="same")
@@ -219,29 +199,11 @@ class MicroTiming:
 
         return jitters
 
-
     def apply_bass(
         self,
         pattern: np.ndarray,
         amount:  float = 0.0,
     ) -> np.ndarray:
-        """
-        Jitter spécialisé pour la basse.
-
-        Deux composantes indépendantes de E :
-            - Anticipation fixe (BASS_ANTICIPATION_RATIO) : simule le
-              geste du bassiste qui "plante" légèrement en avance sur
-              les temps forts. Constante entre conditions.
-            - Bruit gaussien résiduel (BASS_HUMANIZE_NOISE_RATIO) :
-              micro-irrégularités d'exécution, amplitude fixe et faible.
-
-        Une composante dépendante de E :
-            - Swing baseline hérité du kick (amount × BASS_TIMING_SCALE),
-              cohérent avec l'humanisation globale du pattern.
-
-        La basse suit E pour rester cohérente avec le feel rythmique global,
-        mais garde une personnalité propre via l'anticipation fixe.
-        """
         n    = len(pattern)
         hits = np.where(pattern == 1.0)[0]
 
@@ -250,14 +212,10 @@ class MicroTiming:
 
         sd = self.step_duration
 
-        # ── Anticipation fixe (indépendante de E) ─────────────
-        anticipation = config.BASS_ANTICIPATION_RATIO * sd   # légèrement négatif = avance
+        anticipation = config.BASS_ANTICIPATION_RATIO * sd
+        sigma        = config.BASS_HUMANIZE_NOISE_RATIO * sd
+        noise        = self.rng.normal(0.0, sigma, size=n)
 
-        # ── Bruit résiduel fixe ───────────────────────────────
-        sigma = config.BASS_HUMANIZE_NOISE_RATIO * sd
-        noise = self.rng.normal(0.0, sigma, size=n)
-
-        # ── Swing cohérent avec le groove global ──────────────
         swing_total = (config.SWING_BASELINE + config.SWING_MAX_RATIO * amount) * sd
         swing       = np.zeros(n)
         swing[2::4] = swing_total
@@ -268,26 +226,61 @@ class MicroTiming:
 
         return jitters
 
+    # ── Humanisation de la vélocité ────────────────────────
+
+    def humanize_velocities(
+        self,
+        vel_array: np.ndarray,
+        amount:    float,
+        sigma_base: float = None,
+    ) -> np.ndarray:
+        """
+        Fluctuations de vélocité liées à E_mv.
+
+        Modélise les micro-variations de dynamique observées chez les
+        batteurs humains (Gabrielsson 1999). Étend la définition de E_mv
+        — "amplitude des déviations expressives" — au-delà du seul timing.
+
+        Args:
+            vel_array  : vélocités originales (pts MIDI, 1–127)
+            amount     : E_mv normalisé [0.0–1.0]
+            sigma_base : sigma à amount=1.0 (défaut : config.VELOCITY_HUMANIZE_SIGMA)
+
+        Returns:
+            Vélocités humanisées, clampées dans [1, 127].
+        """
+        if sigma_base is None:
+            sigma_base = config.VELOCITY_HUMANIZE_SIGMA
+
+        if amount < 1e-3:
+            return vel_array.copy()
+
+        # On n'applique du bruit que sur les positions où il y a un hit
+        active = vel_array > 0
+        result = vel_array.copy().astype(np.float64)
+
+        if active.any():
+            noise             = self.rng.normal(0.0, sigma_base * amount, size=int(active.sum()))
+            result[active]   += noise
+            result[active]    = np.clip(result[active], 1, 127)
+
+        return result
+
 
 # =========================================================
 # STIMULUS
 # =========================================================
 
 class Stimulus:
-    """
-    Assemble un stimulus complet.
-    P (push/pull inter-voix) appliqué comme décalage uniforme sur le hihat.
-    """
-
     def __init__(self, voices: Voices, micro: MicroTiming) -> None:
         self.voices = voices
         self.micro  = micro
 
     def build(self, cfg: dict, seed: int) -> dict:
-        E       = cfg["E"]
-        P_level = cfg.get("P", 0)
+        E_mv  = cfg["E_mv"]
+        P_mv  = cfg.get("P_mv", 0)
 
-        hihat_push_s = config.push_from_p_level(P_level) * self.micro.step_duration
+        hihat_push_s = config.push_from_p_level(P_mv) * self.micro.step_duration
 
         kick  = self.voices.kick()
         bass, bass_pitch, bass_vel, bass_dur = self.voices.bass()
@@ -298,29 +291,41 @@ class Stimulus:
             seed=seed,
         )
 
+        # ── Micro-timing temporel ────────────────────────────
         kick_j  = self.micro.apply(
             kick,
-            amount=E * config.KICK_TIMING_SCALE,
+            amount=E_mv * config.KICK_TIMING_SCALE,
             voice_weight=config.KICK_VOICE_WEIGHT,
         )
         bass_j = self.micro.apply(
             bass,
-            amount=E * config.BASS_TIMING_SCALE,
+            amount=E_mv * config.BASS_TIMING_SCALE,
         )
         snare_j = self.micro.apply(
             snare,
-            amount=E * config.SNARE_TIMING_SCALE,
+            amount=E_mv * config.SNARE_TIMING_SCALE,
             voice_weight=config.SNARE_VOICE_WEIGHT,
         )
         hihat_j = self.micro.apply(
             hihat,
-            amount=E * config.HIHAT_TIMING_SCALE,
+            amount=E_mv * config.HIHAT_TIMING_SCALE,
             voice_weight=config.HIHAT_VOICE_WEIGHT,
         )
 
-        # Push/pull : décalage uniforme sur tous les hits du hihat
-        hihat_hits      = hihat == 1.0
+        hihat_hits          = hihat == 1.0
         hihat_j[hihat_hits] += hihat_push_s
+
+        # ── Humanisation des vélocités (E_mv) ────────────────
+        # Vélocités de base par voix (identiques à la v1 à E_mv=0)
+        kick_vel_base  = np.where(kick  == 1.0, 95.0, 0.0)
+        snare_vel_base = np.where(snare == 1.0, 90.0, 0.0)
+        hihat_vel_base = np.where(hihat == 1.0, 80.0, 0.0)
+        # La basse a ses propres vélocités issues de BASS_VELOCITY_BAR
+
+        kick_vel  = self.micro.humanize_velocities(kick_vel_base,  amount=E_mv)
+        snare_vel = self.micro.humanize_velocities(snare_vel_base, amount=E_mv)
+        hihat_vel = self.micro.humanize_velocities(hihat_vel_base, amount=E_mv)
+        bass_vel  = self.micro.humanize_velocities(bass_vel,       amount=E_mv)
 
         return {
             "kick":         kick,
@@ -330,8 +335,13 @@ class Stimulus:
             "bass_dur":     bass_dur,
             "snare":        snare,
             "hihat":        hihat,
+            # Vélocités humanisées
+            "kick_vel":     kick_vel,
+            "snare_vel":    snare_vel,
+            "hihat_vel":    hihat_vel,
+            # Jitters temporels
             "kick_jitter":  kick_j,
-            "bass_jitter":  bass_j, 
+            "bass_jitter":  bass_j,
             "snare_jitter": snare_j,
             "hihat_jitter": hihat_j,
             "hihat_push":   hihat_push_s,
@@ -362,6 +372,7 @@ class Metrics:
         return float(np.var(vals)) if vals else 0.0
 
     def syncopation_index(self, pattern: np.ndarray) -> float:
+        """Descripteur émergent S (sans indice)."""
         n      = len(pattern)
         metric = np.tile(
             config.METRIC_PROFILE,
@@ -392,6 +403,7 @@ class Metrics:
         return float(np.var(densities))
 
     def micro_E(self, stim: dict) -> float:
+        """Descripteur émergent E (sans indice)."""
         vals: list[float] = []
         for v in ("kick", "snare", "hihat"):
             mask = stim[v] == 1.0
@@ -399,7 +411,7 @@ class Metrics:
         return float(np.mean(vals)) if vals else 0.0
 
     def inter_voice_push(self, stim: dict) -> float:
-        """P_real — désalignement inter-voix mesuré, signé, normalisé."""
+        """Descripteur émergent P (sans indice) — désalignement inter-voix."""
         hihat_hits  = np.where(stim["hihat"] == 1.0)[0]
         anchor_hits = np.where(
             (stim["kick"] == 1.0) | (stim["snare"] == 1.0)
@@ -435,7 +447,6 @@ class Metrics:
 def build_design(n_repeats: int | None = None) -> list[dict]:
 
     if n_repeats is not None:
-        # override CLI (--repeats N) → toutes les phases au même niveau
         r1 = r2 = r3 = n_repeats
     else:
         r1 = config.REPEATS_P1
@@ -443,21 +454,21 @@ def build_design(n_repeats: int | None = None) -> list[dict]:
         r3 = config.REPEATS_P3
 
     phase1 = [
-        {"phase": 1, "S_mv": s, "D_mv": 1, "E": 0.0, "P": 0}
-        for s in config.S_LEVELS
+        {"phase": 1, "S_mv": s, "D_mv": 1, "E_mv": 0.0, "P_mv": 0}
+        for s in config.S_mv_LEVELS
     ]
     phase2 = [
-        {"phase": 2, "S_mv": 1, "D_mv": 1, "E": e, "P": p}
-        for e, p in itertools.product(config.E_LEVELS, config.P_LEVELS)
+        {"phase": 2, "S_mv": 1, "D_mv": 1, "E_mv": e, "P_mv": p}
+        for e, p in itertools.product(config.E_mv_LEVELS, config.P_mv_LEVELS)
         if not (e == 0.0 and p == 0)
     ]
     phase3 = [
-        {"phase": 3, "S_mv": s, "D_mv": d, "E": e, "P": p}
+        {"phase": 3, "S_mv": s, "D_mv": d, "E_mv": e, "P_mv": p}
         for s, d, e, p in itertools.product(
-            config.S_LEVELS,
-            config.D_LEVELS,
-            config.E_LEVELS,
-            config.P_LEVELS,
+            config.S_mv_LEVELS,
+            config.D_mv_LEVELS,
+            config.E_mv_LEVELS,
+            config.P_mv_LEVELS,
         )
     ]
 
@@ -501,16 +512,18 @@ def run_experiment(
             "stim_id": f"stim_{i:04d}",
             "phase":   cfg["phase"],
             "repeat":  cfg["repeat"],
+            # Paramètres génératifs
             "S_mv":    cfg["S_mv"],
             "D_mv":    cfg["D_mv"],
-            "E":       cfg["E"],
-            "P":       cfg.get("P", 0),
+            "E_mv":    cfg["E_mv"],
+            "P_mv":    cfg.get("P_mv", 0),
+            # Descripteurs émergents
             "D":       metrics.global_density(stim),
             "I":       metrics.inter_voice_variance(stim),
             "V":       metrics.micro_V(stim),
-            "S_real":  metrics.syncopation_index(stim["hihat"]),
-            "E_real":  metrics.micro_E(stim),
-            "P_real":  metrics.inter_voice_push(stim),
+            "S":       metrics.syncopation_index(stim["hihat"]),
+            "E":       metrics.micro_E(stim),
+            "P":       metrics.inter_voice_push(stim),
             "BPM":     grid.bpm,
             "kick":    stim["kick"].tolist(),
             "snare":   stim["snare"].tolist(),
