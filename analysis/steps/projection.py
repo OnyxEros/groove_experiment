@@ -13,8 +13,8 @@ class ProjectionStep(AnalysisStep):
         df = context.dataset
 
         # =====================================================
-        # REALIZED DESCRIPTORS SPACE
-        # Input: (D, I, V, S_real, E_real) from emb_realized
+        # ESPACE DES DESCRIPTEURS ÉMERGENTS
+        # Input: (D, I, V, S, E) depuis emb_realized
         # =====================================================
         if "emb_realized" not in context.cache:
             raise ValueError("ProjectionStep: missing 'emb_realized'")
@@ -23,10 +23,8 @@ class ProjectionStep(AnalysisStep):
         if emb_realized.ndim != 2:
             raise ValueError(f"ProjectionStep: invalid emb_realized shape {emb_realized.shape}")
 
-        # Normalize before UMAP (cosine metric works on unit vectors)
         emb_realized_norm = normalize(emb_realized)
 
-        # Direct 2D projection — no intermediate 3D step
         reducer_realized = umap.UMAP(
             n_components=2,
             metric="cosine",
@@ -36,10 +34,9 @@ class ProjectionStep(AnalysisStep):
         )
         umap_realized = reducer_realized.fit_transform(emb_realized_norm)
 
-        context.cache["umap_realized"] = umap_realized
+        context.cache["umap_realized"]       = umap_realized
         context.cache["umap_realized_model"] = reducer_realized
 
-        # Optional: 3D projection for visualization if needed
         reducer_3d = umap.UMAP(
             n_components=3,
             metric="cosine",
@@ -51,8 +48,8 @@ class ProjectionStep(AnalysisStep):
         context.cache["umap_realized_3d"] = umap_realized_3d
 
         # =====================================================
-        # EMERGENT DESCRIPTORS SPACE
-        # Input: (D, I, V, S_mv) — theoretical from generative params
+        # ESPACE ÉMERGENT
+        # Input: (D, I, V, S_mv) — théorique depuis paramètres génératifs
         # =====================================================
         if all(col in df.columns for col in ["D", "I", "V", "S_mv"]):
             X_emergent = df[["D", "I", "V", "S_mv"]].values
@@ -66,18 +63,17 @@ class ProjectionStep(AnalysisStep):
             )
             umap_emergent = reducer_emergent.fit_transform(X_emergent)
 
-            context.cache["umap_emergent"] = umap_emergent
+            context.cache["umap_emergent"]       = umap_emergent
             context.cache["umap_emergent_model"] = reducer_emergent
         else:
             context.cache["umap_emergent"] = None
 
         # =====================================================
-        # PARAMETRIC SPACE (optional)
-        # Input: (S_mv, D_mv, E) — raw generative parameters
-        # Not projected via UMAP — already low-dim (3D)
+        # ESPACE PARAMÉTRIQUE
+        # Input: (S_mv, D_mv, E_mv) — paramètres génératifs bruts
         # =====================================================
-        if all(col in df.columns for col in ["S_mv", "D_mv", "E"]):
-            context.cache["parametric_coords"] = df[["S_mv", "D_mv", "E"]].values
+        if all(col in df.columns for col in ["S_mv", "D_mv", "E_mv"]):
+            context.cache["parametric_coords"] = df[["S_mv", "D_mv", "E_mv"]].values
         else:
             context.cache["parametric_coords"] = None
 

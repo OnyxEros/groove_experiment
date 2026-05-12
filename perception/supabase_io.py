@@ -25,9 +25,6 @@ def fetch_ratings(refresh: bool = False) -> pd.DataFrame:
     """
     Charge les réponses perceptives (cache local ou Supabase).
 
-    Args:
-        refresh: forcer un re-fetch depuis Supabase même si le cache existe.
-
     Returns:
         DataFrame avec colonnes :
             participant_id, stim_id, groove, complexity, rt, created_at
@@ -36,7 +33,7 @@ def fetch_ratings(refresh: bool = False) -> pd.DataFrame:
 
     if cache_path.exists() and not refresh:
         df = pd.read_csv(cache_path)
-        _validate(df)
+        df = _validate(df)
         return df
 
     # ── Fetch Supabase ────────────────────────────────────
@@ -50,7 +47,7 @@ def fetch_ratings(refresh: bool = False) -> pd.DataFrame:
         )
 
     df = pd.DataFrame(data)
-    _validate(df)
+    df = _validate(df)
 
     # ── Sauvegarde cache ──────────────────────────────────
     cache_path.parent.mkdir(parents=True, exist_ok=True)
@@ -64,10 +61,12 @@ def fetch_ratings(refresh: bool = False) -> pd.DataFrame:
 # VALIDATION
 # =========================================================
 
-def _validate(df):
+def _validate(df: pd.DataFrame) -> pd.DataFrame:
     """
     Vérifie les colonnes minimales, nettoie les types, filtre les RT aberrants.
-    Modifie le DataFrame en place.
+
+    Retourne un nouveau DataFrame propre (pattern non-inplace).
+    L'ancienne version utilisait inplace=True sans retourner df — pattern fragile.
     """
     required = {"stim_id", "groove"}
     missing  = required - set(df.columns)
@@ -76,36 +75,36 @@ def _validate(df):
             f"Colonnes manquantes dans les réponses : {missing}\n"
             f"Colonnes présentes : {list(df.columns)}"
         )
- 
+
+    # Travail sur une copie pour ne pas muter l'original
+    df = df.copy()
+
     # Nettoyage types
-    df.dropna(subset=["stim_id", "groove"], inplace=True)
+    df = df.dropna(subset=["stim_id", "groove"])
     df["stim_id"] = df["stim_id"].astype(str)
     df["groove"]  = pd.to_numeric(df["groove"],  errors="coerce")
- 
+
     if "complexity" in df.columns:
         df["complexity"] = pd.to_numeric(df["complexity"], errors="coerce")
- 
+
     if "rt" in df.columns:
         df["rt"] = pd.to_numeric(df["rt"], errors="coerce")
- 
+
     # Drop les lignes où groove est NaN après coercion
-    df.dropna(subset=["groove"], inplace=True)
- 
+    df = df.dropna(subset=["groove"])
+
     # ── Filtre RT ──────────────────────────────────────────
-    # Importé ici pour éviter la dépendance circulaire
-    # (supabase_io ← regression n'est pas un import normal)
     RT_MIN_S = 4.0
     RT_MAX_S = 600.0
- 
+
     if "rt" in df.columns:
         before = len(df)
-        df.drop(
-            index=df[
-                df["rt"].notna() &
-                ~df["rt"].between(RT_MIN_S, RT_MAX_S, inclusive="both")
-            ].index,
-            inplace=True,
-        )
+        df = df[
+            df["rt"].isna() |
+            df["rt"].between(RT_MIN_S, RT_MAX_S, inclusive="both")
+        ].copy()
         n_dropped = before - len(df)
         if n_dropped > 0:
             print(f"[supabase_io] {n_dropped} réponses filtrées (RT hors [{RT_MIN_S}s–{RT_MAX_S}s])")
+
+    return df

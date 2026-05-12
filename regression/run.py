@@ -8,6 +8,10 @@ Deux modes :
     run_regression_all()         — les 3 feature sets + figure comparative
 
 Sauve les résultats dans data/analysis/run_<timestamp>/regression/.
+
+v2 (wire-up LMM) :
+    - load_raw_responses() est maintenant appelé et df_raw est passé à fit_models().
+    - Le LMM (statsmodels mixedlm + musical_background) est effectivement entraîné.
 """
 
 from __future__ import annotations
@@ -16,14 +20,19 @@ import numpy as np
 from pathlib import Path
 from datetime import datetime
 
-from regression.data_loader import load_regression_data, describe_dataset
+from regression.data_loader import (
+    load_regression_data,
+    load_raw_responses,
+    describe_dataset,
+)
 from regression.model import fit_models
 from regression.evaluation import evaluate_models, print_report, save_report
 
 from config import get_current_run
 
+
 def _make_output_dir(feature_set: str) -> Path:
-    run_dir = get_current_run()   # erreur claire si oublié
+    run_dir = get_current_run()
     out = run_dir / "regression" / feature_set
     out.mkdir(parents=True, exist_ok=True)
     return out
@@ -82,7 +91,7 @@ def run_regression(
         except ImportError:
             print("⚠️  perception.check_supabase introuvable — diagnostic ignoré")
 
-    # ── 1. Données ────────────────────────────────────────
+    # ── 1. Données agrégées (Ridge + RF) ──────────────────
     df, X, y, features = load_regression_data(
         feature_set=feature_set,
         refresh=refresh,
@@ -98,14 +107,23 @@ def run_regression(
             "   → Collecte plus de réponses puis relance avec --refresh."
         )
 
-    # ── 2. Entraînement ──────────────────────────────────
-    models = fit_models(X, y, features=features, seed=seed)
+    # ── 2. Données brutes pour le LMM ─────────────────────
+    # load_raw_responses() était implémenté mais jamais appelé — corrigé.
+    # df_raw contient les réponses individuelles + musical_background si dispo.
+    df_raw = load_raw_responses(feature_set=feature_set, refresh=False)
+    if df_raw is not None:
+        print(f"  [LMM] {len(df_raw)} réponses brutes chargées pour le modèle mixte")
+    else:
+        print("  [LMM] données brutes indisponibles — LMM ignoré pour ce run")
 
-    # ── 3. Évaluation ────────────────────────────────────
+    # ── 3. Entraînement ──────────────────────────────────
+    models = fit_models(X, y, features=features, seed=seed, df_raw=df_raw)
+
+    # ── 4. Évaluation ────────────────────────────────────
     results = evaluate_models(models, X, y, features=features)
     print_report(results, feature_set=feature_set)
 
-    # ── 4. Sauvegarde ────────────────────────────────────
+    # ── 5. Sauvegarde ────────────────────────────────────
     if out_dir is None:
         out_dir = _make_output_dir(feature_set)
 
@@ -113,7 +131,7 @@ def run_regression(
         save_report(results, df=df, features=features, out_dir=out_dir)
         print(f"\n  💾  Résultats → {out_dir}")
 
-    # ── 5. Résumé ─────────────────────────────────────────
+    # ── 6. Résumé ─────────────────────────────────────────
     best = max(results, key=lambda k: results[k].get("r2_cv_mean", -np.inf))
 
     return {
@@ -143,37 +161,27 @@ def run_regression_all(
     Lance la régression sur les 3 feature sets et produit la figure comparative.
 
     Séquence :
-        1. design   — paramètres manipulés (S_mv, D_mv, E)
-        2. acoustic — métriques réalisées  (D, I, V, S_real, E_real)
+        1. design   — paramètres manipulés (S_mv, D_mv, E_mv, P_mv)
+        2. acoustic — métriques réalisées  (D, I, V, S, E, P)
         3. all      — union des deux
-
-    La figure comparison_bar.png est produite à la racine du dossier de run,
-    au même niveau que les 3 sous-dossiers design / acoustic / all.
-
-    Returns:
-        dict {
-            "design":   résultat run_regression("design"),
-            "acoustic": résultat run_regression("acoustic"),
-            "all":      résultat run_regression("all"),
-            "comparison_figure": Path ou None,
-        }
     """
     _header("Régression groove  |  3 feature sets — mode mémoire")
 
-    # Dossier partagé pour le run complet
-    run_root = _make_run_root()
-
+    run_root  = _make_run_root()
     all_results: dict[str, dict] = {}
-    check_done = False
+    check_done  = False
 
     for fs in ("design", "acoustic", "all"):
         result = run_regression(
             feature_set=fs,
-            refresh=(refresh and not check_done),   # fetch Supabase une seule fois
+            # Re-fetch Supabase une seule fois (premier feature set seulement)
+            refresh=(refresh and not check_done),
             min_participants=min_participants,
             normalize=normalize,
             save=save,
             seed=seed,
+            # Diagnostic DB : si le premier check a réussi, on ne re-vérifie pas
+            # Mais si le premier a échoué, on n'essaie pas non plus les suivants
             check_db=(check_db and not check_done),
             out_dir=run_root / fs if save else None,
         )
@@ -186,8 +194,6 @@ def run_regression_all(
         try:
             from regression.figures import plot_comparison_bar
 
-            # Restructure pour plot_comparison_bar :
-            # {feature_set: {model_name: {r2_cv_mean, …}}}
             plot_data: dict[str, dict] = {}
             for fs, res in all_results.items():
                 plot_data[fs] = res["models"]
@@ -199,7 +205,6 @@ def run_regression_all(
         except Exception as exc:
             print(f"  ⚠️  Figure comparative échouée : {exc}")
 
-    # ── Résumé final ──────────────────────────────────────
     _print_comparison_summary(all_results)
 
     return {**all_results, "comparison_figure": fig_path, "run_root": run_root}
@@ -209,9 +214,8 @@ def run_regression_all(
 # HELPERS
 # =========================================================
 
-
 def _make_run_root() -> Path:
-    run_dir = get_current_run()   # déjà importé en haut du fichier
+    run_dir = get_current_run()
     out = run_dir / "regression"
     out.mkdir(parents=True, exist_ok=True)
     return out
@@ -223,7 +227,6 @@ def _header(msg: str) -> None:
 
 
 def _print_comparison_summary(all_results: dict) -> None:
-    """Affiche un tableau récapitulatif des 3 feature sets."""
     w = 65
     print(f"\n{'─'*w}")
     print(f"  {'Feature set':<14} {'Model':<16} {'R² CV':<12} {'MAE CV':<10}")
@@ -237,23 +240,19 @@ def _print_comparison_summary(all_results: dict) -> None:
             r2  = res.get("r2_cv_mean", np.nan)
             mae = res.get("mae_cv_mean", np.nan)
             r2s = res.get("r2_cv_std",  0)
-            tag = "  ★" if fs == all_results[fs].get("best_model") else ""
+            tag = "  ★" if model_name == all_results[fs].get("best_model") else ""
             print(
                 f"  {fs:<14} {model_name:<16} "
                 f"{r2:.3f} ±{r2s:.2f}   {mae:.3f}{tag}"
             )
 
-    # Meilleur modèle global
     best_fs, best_model, best_r2 = _find_global_best(all_results)
     print(f"{'─'*w}")
     print(f"  🏆  Meilleur : {best_fs} / {best_model}  →  R² CV = {best_r2:.3f}")
     print(f"{'─'*w}\n")
 
 
-def _find_global_best(
-    all_results: dict,
-) -> tuple[str, str, float]:
-    """Retourne (feature_set, model_name, r2) du meilleur modèle global."""
+def _find_global_best(all_results: dict) -> tuple[str, str, float]:
     best = ("—", "—", -np.inf)
     for fs, res in all_results.items():
         if not isinstance(res, dict):

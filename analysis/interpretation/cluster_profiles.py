@@ -12,20 +12,27 @@ class ClusterProfileBuilder:
 
             profile = {
                 "size":           int(mask.sum()),
-                "density":        subset["D"].mean(),
-                "syncopation":    subset["S_real"].mean(),
-                "micro_variance": subset["V"].mean(),
-                "inter_voice_var": subset["I"].mean(),
-                "S_mv":           subset["S_mv"].mean(),
-                "D_mv":           subset["D_mv"].mean(),
-                "E":              subset["E"].mean(),
+                "density":        float(subset["D"].mean()),
+                "syncopation":    float(subset["S"].mean()),        # émergent S
+                "micro_variance": float(subset["V"].mean()),
+                "inter_voice_var": float(subset["I"].mean()),
+                # Paramètres génératifs — accès sécurisé avec get() ou guard
+                "S_mv": float(subset["S_mv"].mean()) if "S_mv" in subset.columns else None,
+                "D_mv": float(subset["D_mv"].mean()) if "D_mv" in subset.columns else None,
+                "E_mv": float(subset["E_mv"].mean()) if "E_mv" in subset.columns else None,
             }
 
-            # P et P_real — optionnels (rétro-compatibilité)
+            # P_mv (génératif) — optionnel
+            if "P_mv" in subset.columns:
+                profile["P_mv"] = float(subset["P_mv"].mean())
+
+            # P (émergent push/pull réalisé) — optionnel
             if "P" in subset.columns:
-                profile["P"] = subset["P"].mean()
-            if "P_real" in subset.columns:
-                profile["push_pull"] = subset["P_real"].mean()
+                profile["push_pull"] = float(subset["P"].mean())
+
+            # E (émergent micro-timing réalisé) — distinct de E_mv
+            if "E" in subset.columns:
+                profile["micro_timing_realized"] = float(subset["E"].mean())
 
             profiles[c] = profile
 

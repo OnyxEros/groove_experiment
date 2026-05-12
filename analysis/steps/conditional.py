@@ -13,7 +13,7 @@ class ConditionalAnalysisStep(AnalysisStep):
         df = context.dataset
 
         grouped = df.groupby(
-            ["S_mv", "D_mv", "E"]
+            ["S_mv", "D_mv", "E_mv"]
         ).mean(numeric_only=True)
 
         context.cache["conditional_stats"] = grouped

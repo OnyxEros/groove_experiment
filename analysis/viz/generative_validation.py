@@ -5,17 +5,23 @@ Figure de validation du modèle génératif — style publication mémoire.
 
 Quatre panneaux :
     A — Matrice de corrélations de Pearson (paramètres génératifs → descripteurs)
-    B — Stochasticité intra-condition (violin plots, CV par descripteur)
-        Robuste aux conditions avec une seule répétition (Phase 3).
-    C — Couverture de l'espace de génération (heatmap Smv × Dmv)
-    D — Multicolinéarité (barres VIF horizontales)
+        Axes X : D, I, V, S, E, P  (descripteurs émergents, sans indice)
+        Axes Y : S_mv, D_mv, E_mv, P_mv  (paramètres génératifs, suffixe _mv)
 
-Corrections v2 :
-    - Panel B : gère le cas où toutes les conditions ont 1 seule répétition
-      (Phase 3 seule). Affiche un message clair plutôt que de crasher.
-      Adapte le titre selon qu'il y a des données ou non.
-    - Corrélations : ajoute P → P_real si disponible.
-    - VIF : ajoute P_real si disponible.
+    B — Stochasticité intra-condition (violin plots, CV par descripteur)
+        Descripteurs émergents : D, I, V, S, E
+
+    C — Couverture de l'espace de génération (heatmap S_mv × D_mv)
+
+    D — Multicolinéarité (barres VIF horizontales)
+        Mélange DÉLIBÉRÉ des deux espaces pour détecter la colinéarité
+        ENTRE paramètres génératifs ET descripteurs émergents.
+        Ce mélange est justifié : si E_mv et E sont colinéaires (r~1),
+        on ne peut pas les utiliser dans le même modèle de régression.
+
+Notation :
+    Paramètres génératifs (manipulés) : S_mv, D_mv, E_mv, P_mv
+    Descripteurs émergents (réalisés)  : D, I, V, S, E, P
 """
 
 import matplotlib
@@ -118,22 +124,22 @@ class GenerativeValidation:
         if verbose:
             print(f"  [fig] {path}")
 
-    # ── Panel A : Corrélations ────────────────────────────
+    # ── Panel A : Corrélations paramètres génératifs → descripteurs émergents
 
     def _panel_A_corr(self, ax, df, verbose):
-        # Paramètres génératifs disponibles
-        params_candidates = ["S_mv", "D_mv", "E", "P"]
+        # Paramètres génératifs en lignes
+        params_candidates = ["S_mv", "D_mv", "E_mv", "P_mv"]
         params = [p for p in params_candidates if p in df.columns]
 
-        # Descripteurs réalisés disponibles
-        desc_candidates = ["D", "I", "V", "S_real", "E_real", "P_real"]
+        # Descripteurs émergents en colonnes (sans indice)
+        desc_candidates = ["D", "I", "V", "S", "E", "P"]
         descriptors = [d for d in desc_candidates if d in df.columns]
 
         if not params or not descriptors:
             ax.text(0.5, 0.5, "Données insuffisantes",
                     ha="center", va="center", transform=ax.transAxes)
             _add_panel_label(ax, "A")
-            ax.set_title("Paramètres → descripteurs")
+            ax.set_title("Paramètres génératifs → descripteurs émergents")
             return
 
         corr = np.zeros((len(params), len(descriptors)))
@@ -156,14 +162,13 @@ class GenerativeValidation:
                         ha="center", va="center",
                         fontsize=7.5, fontweight="medium", color=color)
 
-        # Labels TeX
         desc_tex = {
             "D": "$D$", "I": "$I$", "V": "$V$",
-            "S_real": "$S_{real}$", "E_real": "$E_{real}$", "P_real": "$P_{real}$",
+            "S": "$S$", "E": "$E$", "P": "$P$",
         }
         param_tex = {
             "S_mv": "$S_{mv}$", "D_mv": "$D_{mv}$",
-            "E": "$E$", "P": "$P$",
+            "E_mv": "$E_{mv}$", "P_mv": "$P_{mv}$",
         }
 
         ax.set_xticks(range(len(descriptors)))
@@ -178,12 +183,13 @@ class GenerativeValidation:
         cbar.outline.set_linewidth(0.4)
 
         _add_panel_label(ax, "A")
-        ax.set_title("Paramètres → descripteurs")
+        ax.set_title("Paramètres génératifs → descripteurs émergents")
 
-    # ── Panel B : Stochasticité intra-condition ───────────
+    # ── Panel B : Stochasticité intra-condition
 
     def _panel_B_stochasticity(self, ax, df, verbose):
-        descriptors = ["D", "I", "V", "S_real", "E_real"]
+        # Descripteurs émergents uniquement (sans indice)
+        descriptors = ["D", "I", "V", "S", "E"]
         available   = [d for d in descriptors if d in df.columns]
 
         if not available:
@@ -195,10 +201,10 @@ class GenerativeValidation:
             return
 
         desc_tex = {"D": "$D$", "I": "$I$", "V": "$V$",
-                    "S_real": "$S_{real}$", "E_real": "$E_{real}$"}
+                    "S": "$S$", "E": "$E$"}
 
-        # Grouper par condition — uniquement les groupes avec ≥ 2 répétitions
-        group_cols = [c for c in ["S_mv", "D_mv", "E"] if c in df.columns]
+        # Grouper par paramètres génératifs
+        group_cols = [c for c in ["S_mv", "D_mv", "E_mv"] if c in df.columns]
         cv_data = {d: [] for d in available}
         n_groups_with_repeats = 0
 
@@ -208,12 +214,11 @@ class GenerativeValidation:
                     continue
                 n_groups_with_repeats += 1
                 for d in available:
-                    mu  = group[d].mean()
+                    mu    = group[d].mean()
                     sigma = group[d].std(ddof=1)
                     if abs(mu) > 1e-10:
                         cv_data[d].append(float(sigma / abs(mu)))
 
-        # Cas : aucun groupe avec répétitions (Phase 3 seule)
         if n_groups_with_repeats == 0:
             ax.text(
                 0.5, 0.55,
@@ -240,7 +245,6 @@ class GenerativeValidation:
         plot_data = [cv_data[d] for d in available]
         positions = np.arange(1, len(available) + 1)
 
-        # Violin + scatter
         valid_idx = [i for i, x in enumerate(plot_data) if len(x) > 1]
         if valid_idx:
             vp = ax.violinplot(
@@ -256,7 +260,6 @@ class GenerativeValidation:
             vp["cmedians"].set_color(BLUE)
             vp["cmedians"].set_linewidth(1.5)
 
-        # Scatter overlay
         rng = np.random.default_rng(42)
         for i, vals in enumerate(plot_data):
             if not vals:
@@ -272,7 +275,6 @@ class GenerativeValidation:
         ax.grid(axis="y", linestyle=":", linewidth=0.5)
         ax.set_xlim(0.3, len(available) + 0.7)
 
-        # Annotation du nombre de groupes
         ax.text(0.98, 0.97,
                 f"{n_groups_with_repeats} conditions avec répétitions",
                 transform=ax.transAxes, ha="right", va="top",
@@ -281,7 +283,7 @@ class GenerativeValidation:
         _add_panel_label(ax, "B")
         ax.set_title("Stochasticité intra-condition")
 
-    # ── Panel C : Couverture ──────────────────────────────
+    # ── Panel C : Couverture
 
     def _panel_C_coverage(self, ax, df, verbose):
         s_vals = sorted(df["S_mv"].unique())
@@ -320,7 +322,6 @@ class GenerativeValidation:
         cbar.ax.tick_params(labelsize=7, length=2)
         cbar.outline.set_linewidth(0.4)
 
-        # Note sur le déséquilibre
         max_cell = int(coverage.max())
         min_cell = int(coverage[coverage > 0].min())
         ax.text(0.98, 0.02,
@@ -331,11 +332,15 @@ class GenerativeValidation:
         _add_panel_label(ax, "C")
         ax.set_title("Couverture de l'espace de design")
 
-    # ── Panel D : VIF ────────────────────────────────────
+    # ── Panel D : VIF (mélange délibéré des deux espaces)
 
     def _panel_D_vif(self, ax, df, verbose):
-        # Inclut P et P_real si disponibles
-        candidates = ["S_mv", "D", "I", "E", "V", "P", "P_real"]
+        # Mélange DÉLIBÉRÉ : paramètres génératifs + descripteurs émergents.
+        # Objectif : détecter la colinéarité ENTRE les deux espaces.
+        # Si E_mv et E ont un VIF > 10, ils ne peuvent pas coexister
+        # dans le même modèle de régression.
+        # L'ordre : génératifs d'abord, émergents ensuite.
+        candidates = ["S_mv", "D_mv", "E_mv", "P_mv", "D", "I", "V", "S", "E", "P"]
         available  = [p for p in candidates if p in df.columns]
 
         if len(available) < 2:
@@ -355,14 +360,17 @@ class GenerativeValidation:
                 v = np.nan
             vifs.append(v)
 
-        vif_df = sorted(zip(available, vifs), key=lambda x: x[1] if not np.isnan(x[1]) else 0, reverse=True)
+        vif_df = sorted(zip(available, vifs),
+                        key=lambda x: x[1] if not np.isnan(x[1]) else 0,
+                        reverse=True)
         names  = [x[0] for x in vif_df]
         values = [x[1] for x in vif_df]
 
         tex_map = {
-            "S_mv": "$S_{mv}$", "D": "$D$", "I": "$I$",
-            "E": "$E$", "V": "$V$", "S_real": "$S_{real}$",
-            "E_real": "$E_{real}$", "P": "$P$", "P_real": "$P_{real}$",
+            "S_mv": "$S_{mv}$", "D_mv": "$D_{mv}$",
+            "E_mv": "$E_{mv}$", "P_mv": "$P_{mv}$",
+            "D": "$D$", "I": "$I$", "V": "$V$",
+            "S": "$S$", "E": "$E$", "P": "$P$",
         }
 
         colors = []
@@ -400,6 +408,12 @@ class GenerativeValidation:
         ]
         ax.legend(handles=legend_patches, loc="lower right",
                   fontsize=7, framealpha=1.0)
+
+        # Note explicative sur le mélange des deux espaces
+        ax.text(0.98, 0.02,
+                "Mix génératifs + émergents\n(test colinéarité inter-espaces)",
+                transform=ax.transAxes, ha="right", va="bottom",
+                fontsize=6.5, color="#9CA3AF", style="italic")
 
         _add_panel_label(ax, "D")
         ax.set_title("Multicolinéarité (VIF)")

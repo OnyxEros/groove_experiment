@@ -166,13 +166,6 @@
     }
     .info-block-text strong { color: var(--text); font-weight: 500; }
 
-    .consent-line {
-      font-size: 13px;
-      color: var(--muted);
-      margin-bottom: 20px;
-      line-height: 1.55;
-    }
-
     .consent-check-row {
       display: flex;
       align-items: center;
@@ -221,6 +214,67 @@
     }
     .btn.secondary:hover:not(:disabled) { background: rgba(255,255,255,0.04); opacity: 1; }
 
+    /* ── BAGAGE MUSICAL ─────────────────────────────── */
+    .bg-options {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      margin-bottom: 28px;
+    }
+
+    .bg-option {
+      display: block;
+      cursor: pointer;
+    }
+
+    .bg-option input[type="radio"] {
+      position: absolute;
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    .bg-card {
+      display: flex;
+      gap: 14px;
+      align-items: flex-start;
+      padding: 14px 16px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: rgba(255,255,255,0.02);
+      transition: border-color 0.15s, background 0.15s;
+      cursor: pointer;
+    }
+
+    .bg-card:hover {
+      background: rgba(255,255,255,0.04);
+      border-color: rgba(49,56,255,0.3);
+    }
+
+    .bg-option input[type="radio"]:checked + .bg-card {
+      border-color: var(--accent);
+      background: rgba(49,56,255,0.08);
+    }
+
+    .bg-icon {
+      font-size: 20px;
+      flex-shrink: 0;
+      margin-top: 2px;
+    }
+
+    .bg-body {}
+
+    .bg-title {
+      font-size: 14px;
+      font-weight: 500;
+      margin-bottom: 3px;
+    }
+
+    .bg-desc {
+      font-size: 12px;
+      color: var(--muted);
+      line-height: 1.5;
+    }
+
     /* ── INTRO ──────────────────────────────────────── */
     h2.section-title {
       font-size: 22px;
@@ -245,7 +299,8 @@
       color: var(--muted);
       margin-bottom: 10px;
     }
-    #example-container {
+    #example-container,
+    #example-low-container {
       min-height: 72px;
       display: flex;
       align-items: center;
@@ -353,7 +408,7 @@
       display: flex;
       justify-content: space-between;
       align-items: center;
-      margin-bottom: 6px;
+      margin-bottom: 4px;
     }
     .slider-label { font-size: 14px; font-weight: 500; }
     .slider-pill {
@@ -366,6 +421,16 @@
       min-width: 36px;
       text-align: center;
     }
+
+    /* ── Sous-titre des sliders (hint) ──────────────── */
+    .slider-hint {
+      font-size: 11px;
+      color: var(--muted);
+      font-style: italic;
+      margin-bottom: 8px;
+      line-height: 1.4;
+    }
+
     .slider-anchors {
       display: flex;
       justify-content: space-between;
@@ -449,7 +514,7 @@
 
   <div class="topbar">
     <div class="logo">GROOVE<span>STUDY</span></div>
-    <div class="badge">v2.1 · EMC TSMA2</div>
+    <div class="badge">v2.3 · EMC TSMA2</div>
   </div>
 
   <!-- PROGRESS (caché sur écrans non-task) -->
@@ -484,7 +549,7 @@
           <div class="info-block-label">Déroulement</div>
           <div class="info-block-text">
             Tu vas écouter <strong>30 extraits audio</strong> (rythmes de batterie)
-            et évaluer deux dimensions : le <strong>groove</strong> (envie de bouger)
+            et évaluer deux dimensions : l'<strong>envie de bouger</strong> ressentie
             et la <strong>complexité</strong> perçue.
             Durée estimée : <strong>10–15 minutes</strong>.
           </div>
@@ -521,8 +586,70 @@
       </label>
     </div>
 
-    <button class="btn" id="consent-btn" onclick="goIntro()" disabled>
+    <button class="btn" id="consent-btn" onclick="goBackground()" disabled>
       Participer →
+    </button>
+  </div>
+
+  <!-- ══ ÉCRAN BAGAGE MUSICAL ══ -->
+  <div id="screen-background" class="card screen">
+    <div class="section-tag">Profil musical</div>
+    <h2 class="section-title">Quelle est ton expérience musicale ?</h2>
+    <p class="section-sub">
+      Cette information est collectée anonymement et sert uniquement
+      à contextualiser les résultats de l'étude.
+    </p>
+
+    <div class="bg-options">
+
+      <label class="bg-option">
+        <input type="radio" name="bg" value="non_musician" onchange="onBgChange()">
+        <div class="bg-card">
+          <span class="bg-icon">🎧</span>
+          <div class="bg-body">
+            <div class="bg-title">Non-musicien·ne</div>
+            <div class="bg-desc">J'écoute de la musique mais je ne joue d'aucun instrument.</div>
+          </div>
+        </div>
+      </label>
+
+      <label class="bg-option">
+        <input type="radio" name="bg" value="amateur" onchange="onBgChange()">
+        <div class="bg-card">
+          <span class="bg-icon">🎸</span>
+          <div class="bg-body">
+            <div class="bg-title">Musicien·ne amateur·rice</div>
+            <div class="bg-desc">Je joue d'un instrument en loisir, sans formation formelle.</div>
+          </div>
+        </div>
+      </label>
+
+      <label class="bg-option">
+        <input type="radio" name="bg" value="semi_pro" onchange="onBgChange()">
+        <div class="bg-card">
+          <span class="bg-icon">🎹</span>
+          <div class="bg-body">
+            <div class="bg-title">Musicien·ne semi-professionnel·le</div>
+            <div class="bg-desc">Formation musicale sérieuse (école, conservatoire) ou pratique régulière en groupe.</div>
+          </div>
+        </div>
+      </label>
+
+      <label class="bg-option">
+        <input type="radio" name="bg" value="pro" onchange="onBgChange()">
+        <div class="bg-card">
+          <span class="bg-icon">🎼</span>
+          <div class="bg-body">
+            <div class="bg-title">Musicien·ne professionnel·le</div>
+            <div class="bg-desc">La musique est mon métier ou ma formation principale.</div>
+          </div>
+        </div>
+      </label>
+
+    </div>
+
+    <button class="btn" id="bg-btn" onclick="submitBackground()" disabled>
+      Continuer →
     </button>
   </div>
 
@@ -531,14 +658,25 @@
     <div class="section-tag">Introduction</div>
     <h2 class="section-title">Comment ça marche ?</h2>
     <p class="section-sub">
-      Écoute chaque extrait, puis évalue le groove et la complexité sur une échelle de 1 à 7.
-      Le bouton « Continuer » se déverrouille après une écoute minimale.
+      Pour chaque extrait, tu évalueras deux choses :<br>
+      ton <strong>envie de bouger</strong> (hocher la tête, taper du pied, danser)
+      et la <strong>complexité</strong> perçue du rythme.<br>
+      Écoute les deux exemples ci-dessous pour calibrer ton oreille.
     </p>
 
+    <!-- Exemple groove fort -->
     <div class="example-wrap">
-      <div class="example-label">EXEMPLE — groove fort</div>
+      <div class="example-label">EXEMPLE A — forte envie de bouger</div>
       <div id="example-container">
-        <div class="example-loading">Chargement de l'exemple…</div>
+        <div class="example-loading">Chargement…</div>
+      </div>
+    </div>
+
+    <!-- Exemple groove faible -->
+    <div class="example-wrap">
+      <div class="example-label">EXEMPLE B — faible envie de bouger</div>
+      <div id="example-low-container">
+        <div class="example-loading">Chargement…</div>
       </div>
     </div>
 
@@ -558,23 +696,32 @@
     </p>
 
     <div class="calib-sliders">
+
+      <!-- Slider groove calibration -->
       <div class="slider-block">
         <div class="slider-header">
-          <span class="slider-label">Groove</span>
+          <span class="slider-label">Envie de bouger</span>
           <span class="slider-pill" id="cg-val">4</span>
         </div>
+        <div class="slider-hint">
+          Avais-tu envie de hocher la tête, taper du pied, danser ?
+        </div>
         <div class="slider-anchors">
-          <span>Aucune envie de bouger</span>
-          <span>Forte envie de bouger</span>
+          <span>Aucune envie</span>
+          <span>Forte envie</span>
         </div>
         <input type="range" id="cg" min="1" max="7" value="4"
                oninput="syncSlider(this,'cg-val')">
       </div>
 
+      <!-- Slider complexité calibration -->
       <div class="slider-block">
         <div class="slider-header">
           <span class="slider-label">Complexité</span>
           <span class="slider-pill" id="cc-val">4</span>
+        </div>
+        <div class="slider-hint">
+          Le rythme te semblait-il simple ou complexe à suivre ?
         </div>
         <div class="slider-anchors">
           <span>Très simple</span>
@@ -583,6 +730,7 @@
         <input type="range" id="cc" min="1" max="7" value="4"
                oninput="syncSlider(this,'cc-val')">
       </div>
+
     </div>
 
     <button class="btn" onclick="startExperiment()">
@@ -597,7 +745,6 @@
 
 </div>
 
-<!-- Fix #3 : script retiré d'ici, tout est dans app.js -->
 <script src="/static/app.js"></script>
 </body>
 </html>

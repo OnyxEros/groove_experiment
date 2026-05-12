@@ -10,6 +10,7 @@ Pipeline (agrégé) :
 
 Pipeline (brut, pour LMM) :
     responses.csv ──► join sur stim_id ──► features + groove + participant_id
+                                           + musical_background (si disponible)
 
 Features disponibles :
     Design (manipulés) : S_mv, D_mv, E, P
@@ -18,6 +19,10 @@ Features disponibles :
 Target :
     groove_mean  — moyenne des ratings groove par stim_id (agrégé)
     groove       — rating brut par réponse (pour LMM)
+
+Notation :
+    Paramètres génératifs : S_mv, D_mv, E_mv, P_mv
+    Descripteurs émergents : D, I, V, S, E, P
 """
 
 from __future__ import annotations
@@ -34,10 +39,13 @@ from perception.supabase_io import fetch_ratings
 # FEATURE SETS
 # =========================================================
 
-DESIGN_FEATURES   = ["S_mv", "D_mv", "E", "P"]
-ACOUSTIC_FEATURES = ["D", "I", "V", "S_real", "E_real", "P_real"]
+DESIGN_FEATURES   = ["S_mv", "D_mv", "E_mv", "P_mv"]
+ACOUSTIC_FEATURES = ["D", "I", "V", "S", "E", "P"]
 ALL_FEATURES      = DESIGN_FEATURES + ACOUSTIC_FEATURES
 TARGET            = "groove_mean"
+
+# Niveaux musicaux ordonnés (pour dummy encoding cohérent)
+BACKGROUND_ORDER  = ["non_musician", "amateur", "semi_pro", "pro"]
 
 
 # =========================================================
@@ -62,6 +70,20 @@ def _resolve_stim_id(meta: pd.DataFrame) -> pd.DataFrame:
 
 
 # =========================================================
+# RÉTRO-COMPATIBILITÉ ancienne notation
+# =========================================================
+
+def _compat_rename(df: pd.DataFrame) -> pd.DataFrame:
+    return df.rename(columns={
+        "S_real": "S",
+        "E_real": "E",
+        "P_real": "P",
+        "E":      "E_mv",
+        "P":      "P_mv",
+    }, errors="ignore")
+
+
+# =========================================================
 # LOADER AGRÉGÉ (Ridge + RF)
 # =========================================================
 
@@ -71,14 +93,10 @@ def load_regression_data(
     min_participants: int  = 1,
     normalize:        bool = True,
 ) -> tuple[pd.DataFrame, np.ndarray, np.ndarray, list[str]]:
-    """
-    Charge les données agrégées (groove_mean par stim_id) pour Ridge et RF.
 
-    Returns:
-        df, X, y, features
-    """
     meta = pd.read_csv(METADATA_PATH)
     meta = _resolve_stim_id(meta)
+    meta = _compat_rename(meta)
 
     df = load_perceptual_dataset(embedding_df=meta, refresh=refresh)
 
@@ -121,14 +139,10 @@ def load_raw_responses(
     refresh:     bool = False,
 ) -> pd.DataFrame | None:
     """
-    Charge les réponses brutes (une ligne par réponse) jointes aux features
-    des stimuli. Nécessaire pour le LMM (effet aléatoire participant).
+    Charge les réponses brutes pour le LMM.
 
-    Colonnes retournées :
-        groove, participant_id, stim_id + features du feature_set
-
-    Returns:
-        DataFrame brut ou None si données indisponibles.
+    Inclut musical_background si disponible dans les réponses Supabase.
+    Cette colonne sera utilisée comme effet fixe catégoriel dans fit_lmm().
     """
     try:
         raw = fetch_ratings(refresh=refresh)
@@ -140,15 +154,15 @@ def load_raw_responses(
         print("  [LMM data] colonne participant_id absente — LMM ignoré")
         return None
 
-    # ── Join avec les features des stimuli ───────────────
     try:
         meta = pd.read_csv(METADATA_PATH)
         meta = _resolve_stim_id(meta)
+        meta = _compat_rename(meta)
     except Exception as e:
         print(f"  [LMM data] Impossible de charger metadata.csv : {e}")
         return None
 
-    raw["stim_id"] = raw["stim_id"].astype(str)
+    raw["stim_id"]  = raw["stim_id"].astype(str)
     meta["stim_id"] = meta["stim_id"].astype(str)
 
     df = raw.merge(meta, on="stim_id", how="inner")
@@ -157,8 +171,7 @@ def load_raw_responses(
         print("  [LMM data] jointure raw × metadata vide")
         return None
 
-    # ── Sélection des features disponibles ───────────────
-    all_candidates = ALL_FEATURES if feature_set == "all" else (
+    all_candidates     = ALL_FEATURES if feature_set == "all" else (
         DESIGN_FEATURES if feature_set == "design" else ACOUSTIC_FEATURES
     )
     features_available = [f for f in all_candidates if f in df.columns]
@@ -167,16 +180,36 @@ def load_raw_responses(
         print("  [LMM data] aucune feature disponible")
         return None
 
-    # ── Filtre RT ─────────────────────────────────────────
     if "rt" in df.columns:
         df = df[
             df["rt"].between(4.0, 600.0, inclusive="both") | df["rt"].isna()
         ].copy()
 
+    # ── Colonnes à conserver ──────────────────────────────
     keep_cols = ["groove", "participant_id", "stim_id"] + features_available
+
+    # Inclure musical_background si disponible — sera dummy-encodé dans fit_lmm
+    if "musical_background" in df.columns and df["musical_background"].notna().any():
+        keep_cols.append("musical_background")
+        # Normalise en catégorie ordonnée pour un dummy encoding cohérent
+        df["musical_background"] = pd.Categorical(
+            df["musical_background"],
+            categories=BACKGROUND_ORDER,
+            ordered=True,
+        )
+        n_bg = df["musical_background"].notna().sum()
+        n_miss = df["musical_background"].isna().sum()
+        print(
+            f"  [LMM data] musical_background : {n_bg} réponses renseignées"
+            + (f", {n_miss} manquantes (ignorées)" if n_miss > 0 else "")
+        )
+        # Distribution
+        dist = df["musical_background"].value_counts().to_dict()
+        print(f"  [LMM data] distribution : {dist}")
+
     df = df[[c for c in keep_cols if c in df.columns]].dropna(subset=["groove"])
 
-    n = len(df)
+    n   = len(df)
     n_p = df["participant_id"].nunique()
     n_s = df["stim_id"].nunique()
     print(f"  [LMM data] {n} réponses brutes · {n_p} participants · {n_s} stimuli")
@@ -222,6 +255,12 @@ def describe_dataset(df: pd.DataFrame, features: list[str]) -> None:
     if "n_participants" in df.columns:
         print(f"  Réponses totales : {int(df['n_participants'].sum())}")
         print(f"  Médiane / stim   : {df['n_participants'].median():.1f}")
+    if "musical_background_mode" in df.columns:
+        dist = df["musical_background_mode"].value_counts().to_dict()
+        print(f"  Profil dominant  : {dist}")
+    if "pct_musicians" in df.columns:
+        pct = df["pct_musicians"].mean()
+        print(f"  % musiciens moy  : {pct*100:.1f}%")
     print(f"  Features ({len(features):2d})     : {features}")
     print(f"  Target           : {TARGET}")
     print(f"  groove_mean      : {df[TARGET].mean():.3f} ± {df[TARGET].std():.3f}")
@@ -229,9 +268,8 @@ def describe_dataset(df: pd.DataFrame, features: list[str]) -> None:
     print(f"{'─'*w}\n")
 
 
-# ── Constante RT ────────────────────────────────────────────
-RT_MIN_S  = 4.0
-RT_MAX_S  = 600.0
+RT_MIN_S = 4.0
+RT_MAX_S = 600.0
 
 
 def filter_valid_responses(df):

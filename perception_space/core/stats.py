@@ -3,13 +3,9 @@ perception_space/core/stats.py
 ==============================
 Tests statistiques pour l'analyse perceptive du groove.
 
-Corrections v2 :
-    - permutation_test : calcul paires sans matrice O(n²) complète
-      → utilise scipy.spatial.distance.pdist (C, ~10× plus rapide)
-    - kruskal_by_condition : teste la normalité par groupe (Shapiro-Wilk)
-      et choisit automatiquement ANOVA (si normale) ou Kruskal-Wallis
-    - compute_condition_stats : nom de colonne configurable (plus de hardcode)
-    - Warning VIF > 10 dans kruskal_by_condition
+Notation :
+    Paramètres génératifs (manipulés) : S_mv, D_mv, E_mv, P_mv
+    Descripteurs émergents (réalisés)  : D, I, V, S, E, P
 """
 
 from __future__ import annotations
@@ -35,17 +31,11 @@ def kruskal_by_condition(
     Test non-paramétrique (Kruskal-Wallis) ou paramétrique (ANOVA one-way)
     selon la normalité des groupes (Shapiro-Wilk, α=0.05).
 
-    Choix automatique par condition :
-        - Tous les groupes normaux → ANOVA (plus puissante)
-        - Au moins un groupe non-normal → Kruskal-Wallis (robuste)
-
-    Returns:
-        DataFrame avec colonnes :
-            condition, test_used, statistic, p_value, eta2,
-            significant, interpretation, normality_ok
+    condition_cols par défaut : paramètres génératifs S_mv, D_mv, E_mv, P_mv
+    (les conditions manipulées, pas les descripteurs émergents).
     """
     if condition_cols is None:
-        condition_cols = [c for c in ["S_mv", "D_mv", "E", "P"] if c in df.columns]
+        condition_cols = [c for c in ["S_mv", "D_mv", "E_mv", "P_mv"] if c in df.columns]
 
     rows = []
     for cond in condition_cols:
@@ -61,19 +51,17 @@ def kruskal_by_condition(
         if len(groups) < 2:
             continue
 
-        # ── Test de normalité par groupe ─────────────────
         normality_ok = True
         for g in groups:
             if len(g) < 3:
                 normality_ok = False
                 break
-            if len(g) <= 5000:   # Shapiro limité à 5000
+            if len(g) <= 5000:
                 _, p_norm = stats.shapiro(g)
                 if p_norm < 0.05:
                     normality_ok = False
                     break
 
-        # ── Test statistique ──────────────────────────────
         try:
             if normality_ok:
                 stat, p = stats.f_oneway(*groups)
@@ -101,7 +89,6 @@ def kruskal_by_condition(
     return pd.DataFrame(rows).sort_values("eta2", ascending=False)
 
 
-# ── Alias rétro-compatible ────────────────────────────────
 def anova_by_condition(
     df: pd.DataFrame,
     groove_col: str = "groove_mean",
@@ -112,7 +99,7 @@ def anova_by_condition(
 
 
 # =========================================================
-# TEST DE PERMUTATION — O(n log n) mémoire
+# TEST DE PERMUTATION
 # =========================================================
 
 def permutation_test(
@@ -121,36 +108,11 @@ def permutation_test(
     n_permutations: int = 1000,
     seed: int = 42,
 ) -> dict:
-    """
-    Test de permutation : les ratings groove sont-ils structurés
-    dans l'espace latent au-delà du hasard ?
-
-    Statistique : corrélation de Pearson entre distance euclidienne
-    dans X et différence absolue de rating |y_i - y_j|.
-
-    Optimisation v2 :
-        - scipy.spatial.distance.pdist → C, pas de matrice n×n en RAM
-        - ~10× plus rapide que la version matricielle pour n > 100
-
-    Args:
-        X              : embeddings normalisés (n, d)
-        y              : groove ratings (n,)
-        n_permutations : nombre de permutations
-        seed           : graine reproductibilité
-
-    Returns:
-        dict { observed_r, p_value, permutation_dist, significant, n_permutations }
-    """
     rng = np.random.default_rng(seed)
-    n   = len(y)
     y   = np.asarray(y, dtype=np.float64)
 
-    # ── Distances euclidiennes via pdist (C, compact) ─────
-    dist_X = pdist(X, metric="euclidean")          # shape (n*(n-1)/2,)
-
-    # ── Différences de ratings (même ordre que pdist) ─────
-    # pdist génère les paires (i,j) avec i < j dans l'ordre lexicographique
-    diff_y = pdist(y.reshape(-1, 1), metric="cityblock")  # |y_i - y_j|
+    dist_X = pdist(X, metric="euclidean")
+    diff_y = pdist(y.reshape(-1, 1), metric="cityblock")
 
     if dist_X.std() < 1e-10 or diff_y.std() < 1e-10:
         return {
@@ -164,7 +126,6 @@ def permutation_test(
 
     observed_r, _ = stats.pearsonr(dist_X, diff_y)
 
-    # ── Distribution nulle ────────────────────────────────
     null_dist = np.zeros(n_permutations)
     for i in range(n_permutations):
         y_perm    = rng.permutation(y)
@@ -193,19 +154,15 @@ def compute_condition_stats(
     condition_cols: list[str] | None = None,
 ) -> pd.DataFrame:
     """
-    Statistiques descriptives de groove_mean par cellule du design.
-
-    Args:
-        groove_col     : nom de la colonne target (configurable, plus de hardcode)
-        condition_cols : colonnes de conditions à grouper
+    Statistiques descriptives par cellule du design.
+    condition_cols par défaut : paramètres génératifs.
     """
     if condition_cols is None:
-        condition_cols = [c for c in ["S_mv", "D_mv", "E", "P"] if c in df.columns]
+        condition_cols = [c for c in ["S_mv", "D_mv", "E_mv", "P_mv"] if c in df.columns]
 
     if not condition_cols:
         raise ValueError("Aucune colonne de condition trouvée")
 
-    # Vérifie que groove_col existe
     if groove_col not in df.columns:
         available = [c for c in df.columns if "groove" in c.lower()]
         if available:
@@ -244,7 +201,6 @@ def pairwise_comparisons(
     condition_col: str = "S_mv",
     alpha: float = 0.05,
 ) -> pd.DataFrame:
-    """Comparaisons par paires entre niveaux d'une condition (Bonferroni)."""
     levels = sorted(df[condition_col].unique())
     groups = {
         lv: df.loc[df[condition_col] == lv, groove_col].dropna().values
@@ -259,8 +215,8 @@ def pairwise_comparisons(
         if len(g_a) < 2 or len(g_b) < 2:
             continue
 
-        t, p       = stats.ttest_ind(g_a, g_b, equal_var=False)
-        p_bonf     = min(p * n_comparisons, 1.0)
+        t, p   = stats.ttest_ind(g_a, g_b, equal_var=False)
+        p_bonf = min(p * n_comparisons, 1.0)
 
         rows.append({
             "level_a":      lv_a,
@@ -297,8 +253,7 @@ def _eta_squared_groups(groups: list[np.ndarray]) -> float:
 
 
 def _interpret_eta2(eta2: float) -> str:
-    """Cohen 1988 : 0.01 petit, 0.06 moyen, 0.14 grand."""
-    if eta2 < 0.01:  return "négligeable"
+    if eta2 < 0.01:   return "négligeable"
     elif eta2 < 0.06: return "petit"
     elif eta2 < 0.14: return "moyen"
     else:             return "grand"

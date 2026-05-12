@@ -12,22 +12,18 @@ class MetricsViewStep(AnalysisStep):
 
         df = context.dataset
 
-        required_cols = ["D", "I", "V", "S_real", "E_real"]
-
-        # =====================================================
-        # VALIDATION
-        # =====================================================
+        # Descripteurs émergents complets (D, I, V, S, E, P)
+        # P (push/pull inter-voix) était absent — ajouté pour aligner avec
+        # RealizedEmbedding.COLS et generator.py:Metrics.inter_voice_push()
+        required_cols = ["D", "I", "V", "S", "E", "P"]
 
         missing = [c for c in required_cols if c not in df.columns]
 
         if missing:
             raise ValueError(
-                f"MetricsViewStep missing columns: {missing}"
+                f"MetricsViewStep missing columns: {missing}\n"
+                "Vérifie que generator.py calcule bien tous les descripteurs émergents."
             )
-
-        # =====================================================
-        # MATRIX BUILD
-        # =====================================================
 
         metrics = np.stack(
             [df[c].values for c in required_cols],

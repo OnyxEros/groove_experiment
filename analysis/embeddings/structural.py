@@ -6,13 +6,13 @@ class StructuralEmbedding(BaseEmbedding):
     """
     Embedding sur les paramètres génératifs.
 
-    Vecteur : [S_mv, D_mv, E, P, BPM, phase]
-    P optionnel (rétro-compatible si absent du DataFrame).
+    Vecteur : [S_mv, D_mv, E_mv, P_mv, BPM, phase]
+    P_mv optionnel (rétro-compatible si absent du DataFrame).
     """
 
     name = "structural"
 
-    COLS = ["S_mv", "D_mv", "E", "P", "BPM", "phase"]
+    COLS = ["S_mv", "D_mv", "E_mv", "P_mv", "BPM", "phase"]
 
     def compute(self, df, cache=None):
         cols = [c for c in self.COLS if c in df.columns]
