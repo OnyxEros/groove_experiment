@@ -9,22 +9,23 @@ Modèles :
     LMM           — modèle linéaire mixte avec effet aléatoire participant
 
                     Modèle formel du mémoire :
-                    G_ij = β₀ + β₁·S_real + β₂·S_real² + β₃·D + β₄·I
-                         + β₅·E_real + β₆·V + β₇·P_real + β₈·BPM
+                    G_ij = β₀ + β₁·S_z + β₂·S_z² + β₃·D_z + β₄·I_z
+                         + β₅·E_z + β₆·V_z + β₇·P_z + β₈·BPM_z
                          + β₉·musical_background   (si disponible)
                          + u_i + ε_ij
 
-                    musical_background est dummy-encodé avec "non_musician"
-                    comme référence, ce qui permet d'interpréter les
-                    coefficients comme l'écart de rating par rapport aux
-                    non-musiciens, toutes choses égales par ailleurs.
+                    Où _z désigne la variable centrée-réduite.
+                    S_z² est calculé APRÈS normalisation de S, ce qui
+                    garantit que β₁ et β₂ sont interprétables conjointement
+                    (S_z=0 correspond à la moyenne de S dans l'échantillon).
 
-v2 :
-    - fit_lmm : détecte musical_background dans df_raw, crée les dummies
-      (référence : non_musician), les ajoute aux effets fixes si disponibles.
-    - _print_lmm_summary : affiche les coefficients musical_background
-      avec interprétation explicite.
-    - Rétro-compatible : si musical_background absent, comportement inchangé.
+                    musical_background est dummy-encodé avec "non_musician"
+                    comme référence.
+
+v3 :
+    - S_sq est désormais calculé sur S normalisé (S_z), pas sur S brut.
+      Correction critique pour l'interprétabilité des coefficients LMM.
+    - _compat_rename retiré de ce module (délégué à data_loader.py).
 
 Notation :
     S, E, P = descripteurs émergents (sans indice)
@@ -42,13 +43,12 @@ from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 
 # Référence catégorielle pour musical_background
-# (toutes les interprétations sont relatives à ce groupe)
-BACKGROUND_REF      = "non_musician"
-BACKGROUND_LEVELS   = ["amateur", "semi_pro", "pro"]   # dummies créés
-BACKGROUND_LABELS   = {
-    "amateur":    "Musicien·ne amateur·rice",
-    "semi_pro":   "Musicien·ne semi-pro",
-    "pro":        "Musicien·ne professionnel·le",
+BACKGROUND_REF    = "non_musician"
+BACKGROUND_LEVELS = ["amateur", "semi_pro", "pro"]
+BACKGROUND_LABELS = {
+    "amateur":  "Musicien·ne amateur·rice",
+    "semi_pro": "Musicien·ne semi-pro",
+    "pro":      "Musicien·ne professionnel·le",
 }
 
 
@@ -103,11 +103,19 @@ def fit_lmm(
     """
     Modèle linéaire mixte sur les réponses brutes.
 
-    G_ij = β·X_j + β_bg·musical_background_i + u_i + ε_ij
+    G_ij = β·X_z_j + β_bg·musical_background_i + u_i + ε_ij
 
-    musical_background est dummy-encodé (référence : non_musician).
-    Si la colonne est absente ou trop incomplète, le modèle tourne
-    sans cette covariable — comportement rétro-compatible.
+    ORDRE DES OPÉRATIONS (important pour S_sq) :
+        1. Sélection et nettoyage des colonnes
+        2. Normalisation des prédicteurs continus  ← S devient S_z ici
+        3. Création de S_sq = S_z²                 ← APRÈS normalisation
+        4. Ajout des dummies musical_background
+        5. Estimation REML
+
+    Cet ordre garantit que β_S et β_S_sq sont interprétables conjointement :
+    S_z=0 correspond à la moyenne de S dans l'échantillon, et S_sq mesure
+    la courbure autour de cette moyenne — ce qui correspond au modèle
+    décrit dans le mémoire (§ régression groove).
     """
     try:
         import statsmodels.formula.api as smf
@@ -124,8 +132,6 @@ def fit_lmm(
     df = df_raw.copy()
 
     # ── Dummy encoding musical_background ────────────────
-    # Référence : non_musician (groupe de base)
-    # Dummies créés : bg_amateur, bg_semi_pro, bg_pro
     bg_dummies_used: list[str] = []
     has_bg = (
         "musical_background" in df.columns
@@ -133,17 +139,14 @@ def fit_lmm(
     )
 
     if has_bg:
-        # Standardise les valeurs
         df["musical_background"] = df["musical_background"].astype(str)
         df.loc[~df["musical_background"].isin(
             [BACKGROUND_REF] + BACKGROUND_LEVELS
         ), "musical_background"] = None
 
-        # Crée les dummies (drop_first=False pour contrôler la référence)
         for lvl in BACKGROUND_LEVELS:
             col = f"bg_{lvl}"
             df[col] = (df["musical_background"] == lvl).astype(float)
-            # N'inclure le dummy que si le niveau est représenté
             if df[col].sum() >= 3:
                 bg_dummies_used.append(col)
 
@@ -156,7 +159,7 @@ def fit_lmm(
             print("  [LMM] musical_background : niveaux insuffisants — ignoré")
             has_bg = False
 
-    # ── Colonnes nécessaires ──────────────────────────────
+    # ── Sélection des colonnes ────────────────────────────
     all_fixed = list(features) + bg_dummies_used
     keep      = ["groove", "participant_id", "stim_id"] + all_fixed
     df        = df[[c for c in keep if c in df.columns]].dropna(subset=["groove"])
@@ -170,21 +173,26 @@ def fit_lmm(
         print(f"  [LMM] trop peu de participants ({n_participants}) — LMM ignoré")
         return None
 
-    # ── Terme quadratique sur S ───────────────────────────
-    if "S" in features:
-        df["S_sq"] = df["S"] ** 2
-        fixed_features = [f for f in all_fixed if f != "S"]
-        fixed_features = ["S", "S_sq"] + fixed_features
-    else:
-        fixed_features = list(all_fixed)
-
-    # ── Normalisation des prédicteurs continus ────────────
-    # Les dummies bg_* ne sont PAS normalisés (déjà 0/1)
-    for col in fixed_features:
-        if col in df.columns and col not in bg_dummies_used:
+    # ── ÉTAPE 1 : Normalisation des prédicteurs continus ──
+    # Les dummies bg_* ne sont PAS normalisés (déjà 0/1).
+    # IMPORTANT : S est normalisé ICI, avant la création de S_sq.
+    for col in features:
+        if col in df.columns:
             mu, sigma = df[col].mean(), df[col].std()
             if sigma > 1e-10:
                 df[col] = (df[col] - mu) / sigma
+
+    # ── ÉTAPE 2 : Terme quadratique sur S normalisé ───────
+    # S_sq = S_z² où S_z = (S - mean(S)) / std(S)
+    # β_S  → effet linéaire de S autour de sa moyenne
+    # β_S_sq → courbure (concavité/convexité) de la relation groove ~ S
+    # Les deux coefficients sont maintenant interprétables conjointement.
+    has_S_quadratic = "S" in features
+    if has_S_quadratic:
+        df["S_sq"] = df["S"] ** 2   # S est déjà normalisé à ce stade
+        fixed_features = ["S", "S_sq"] + [f for f in all_fixed if f != "S"]
+    else:
+        fixed_features = list(all_fixed)
 
     formula = "groove ~ " + " + ".join(fixed_features)
 
@@ -205,15 +213,14 @@ def fit_lmm(
         for name, val in result.params.items():
             if name == "Intercept":
                 continue
+            ci = result.conf_int()
             coefs[name] = {
-                "coef":    float(val),
-                "se":      float(result.bse.get(name, np.nan)),
-                "z":       float(result.tvalues.get(name, np.nan)),
-                "p_value": float(result.pvalues.get(name, np.nan)),
-                "ci_low":  float(result.conf_int().loc[name, 0])
-                           if name in result.conf_int().index else np.nan,
-                "ci_high": float(result.conf_int().loc[name, 1])
-                           if name in result.conf_int().index else np.nan,
+                "coef":          float(val),
+                "se":            float(result.bse.get(name, np.nan)),
+                "z":             float(result.tvalues.get(name, np.nan)),
+                "p_value":       float(result.pvalues.get(name, np.nan)),
+                "ci_low":        float(ci.loc[name, 0]) if name in ci.index else np.nan,
+                "ci_high":       float(ci.loc[name, 1]) if name in ci.index else np.nan,
                 "is_background": name in bg_dummies_used,
             }
 
@@ -241,6 +248,7 @@ def fit_lmm(
             "aic":               float(result.aic),
             "bic":               float(result.bic),
             "has_background":    has_bg,
+            "s_sq_on_normalized": True,   # flag de traçabilité
             # Alias pour evaluate_models
             "r2_cv_mean":        r2_marginal,
             "r2_cv_std":         0.0,
@@ -257,6 +265,10 @@ def fit_lmm(
         traceback.print_exc()
         return None
 
+
+# =========================================================
+# HELPERS LMM
+# =========================================================
 
 def _r2_lmm(result, df, features):
     try:
@@ -296,9 +308,10 @@ def _print_lmm_summary(lmm: dict) -> None:
     print(f"\n{'─'*w}")
     print(f"  Modèle Linéaire Mixte (REML)")
     print(f"{'─'*w}")
-    print(f"  Observations        : {lmm['n_obs']}")
+    print(f"  Observations         : {lmm['n_obs']}")
     print(f"  Participants         : {lmm['n_participants']}")
     print(f"  Convergence          : {'✔' if lmm['converged'] else '⚠️  non atteinte'}")
+    print(f"  S² calculé sur S_z   : ✔  (après normalisation — interprétable)")
     if lmm.get("has_background"):
         print(f"  Musical background   : ✔  (réf. = {lmm['_bg_ref']})")
     else:
@@ -314,7 +327,6 @@ def _print_lmm_summary(lmm: dict) -> None:
     print(f"  AIC / BIC            : {lmm['aic']:.1f} / {lmm['bic']:.1f}")
     print()
 
-    # Sépare les prédicteurs acoustiques / design des dummies background
     acoustic_coefs = {k: v for k, v in lmm["coefs"].items() if not v.get("is_background")}
     bg_coefs       = {k: v for k, v in lmm["coefs"].items() if v.get("is_background")}
 
@@ -331,10 +343,9 @@ def _print_lmm_summary(lmm: dict) -> None:
         print(f"\n  Bagage musical  (réf. = {lmm['_bg_ref']})")
         print(f"  {'─'*56}")
         for name, v in bg_coefs.items():
-            # Convertit bg_semi_pro → label lisible
-            level  = name.replace("bg_", "")
-            label  = BACKGROUND_LABELS.get(level, name)
-            sig    = "★" if v["p_value"] < 0.05 else ""
+            level     = name.replace("bg_", "")
+            label     = BACKGROUND_LABELS.get(level, name)
+            sig       = "★" if v["p_value"] < 0.05 else ""
             direction = "↑" if v["coef"] > 0 else "↓"
             print(
                 f"  {label:<28} β={v['coef']:>+7.3f}  "
