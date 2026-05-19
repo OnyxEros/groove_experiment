@@ -26,8 +26,12 @@ class ClusterInterpretation:
         available_desc    = [d for d in descriptors if d in df.columns]
 
         if len(available_desc) == 0:
-            # Fallback sur paramètres génératifs
-            available_desc = ["S_mv", "D_mv", "E_mv"]
+            raise ValueError(
+                "ClusterInterpretation : aucun descripteur émergent disponible "
+                "(D, I, V, S, E absents du DataFrame).\n"
+                "Vérifie que MetricsViewStep a bien tourné avant VizStep."
+            )
+
 
         cluster_profiles = []
         cluster_stats    = []

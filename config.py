@@ -64,7 +64,7 @@ SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 # STRUCTURE TEMPORELLE
 # =========================================================
 
-BPM           = 100
+BPM           = 90
 STEPS_PER_BAR = 16
 TOTAL_BARS    = 6
 LOOP_BARS     = 2
@@ -205,7 +205,7 @@ assert abs(KICK_DENSITY_WEIGHT + SNARE_DENSITY_WEIGHT + HIHAT_DENSITY_WEIGHT - 1
 # PUSH/PULL INTER-VOIX (Keil 1995)
 # =========================================================
 
-PUSH_MAX_RATIO = 0.22
+PUSH_MAX_RATIO = 0.11
 
 # =========================================================
 # PAD HARMONIQUE INVARIANT
@@ -261,6 +261,18 @@ UMAP_CONFIG = {
     "metric":        "cosine",
     "random_state":  SEED,
 }
+
+
+# =========================================================
+# SEUILS RT — SOURCE DE VÉRITÉ UNIQUE
+# Justification RT_MIN : stimulus ~6.7s à 90bpm.
+# Un participant attentif peut répondre dès 1.5s d'écoute.
+# 4.0s filtrait ~15% des réponses rapides légitimes (biais sélection).
+# Référence : Madison (2006) seuil 1s pour stimuli rythmiques comparables.
+# =========================================================
+RT_MIN_S = 1.5
+RT_MAX_S = 600.0
+
 
 # =========================================================
 # DERIVED VALUES

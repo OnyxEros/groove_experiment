@@ -46,9 +46,6 @@ def check_binaries():
 
 
 def check_fluid_synth_runtime():
-    """
-    Vérifie que fluidsynth fonctionne réellement
-    """
     try:
         subprocess.run(
             ["fluidsynth", "--version"],
@@ -64,9 +61,6 @@ def check_fluid_synth_runtime():
 
 
 def check_soundfont():
-    """
-    CRITIQUE pour ton pipeline audio
-    """
     print("\n🎼 Checking soundfont...\n")
 
     if SOUNDFONT_PATH.exists():
@@ -114,39 +108,32 @@ def check_optional_libs():
 # MAIN CHECK
 # =========================================================
 
-def run_env_check(strict=True):
+def run_env_check(strict=True) -> bool:          # ← retourne maintenant bool
     print("\n==============================")
     print(" ENVIRONMENT CHECK 🚀")
     print("==============================")
 
     bin_missing = check_binaries()
-    py_missing = check_python_libs()
+    py_missing  = check_python_libs()
     check_optional_libs()
 
-    fluid_ok = check_fluid_synth_runtime()
+    fluid_ok    = check_fluid_synth_runtime()
     soundfont_ok = check_soundfont()
 
     errors = []
 
     if bin_missing:
         errors.extend(bin_missing)
-
     if py_missing:
         errors.extend(py_missing)
-
     if not fluid_ok:
         errors.append("fluidsynth runtime")
-
     if not soundfont_ok:
         errors.append("soundfont missing")
 
-    # =====================================================
-    # REPORT
-    # =====================================================
-
+    # ── Rapport ───────────────────────────────────────────
     if errors:
         print("\n❌ Environment not ready\n")
-
         print("Issues detected:")
         for e in errors:
             print(f"  - {e}")
@@ -165,5 +152,7 @@ def run_env_check(strict=True):
         if strict:
             sys.exit(1)
 
-    else:
-        print("\n✅ Environment OK\n")
+        return False          # ← retourne False si erreurs
+
+    print("\n✅ Environment OK\n")
+    return True               # ← retourne True si tout est OK

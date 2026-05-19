@@ -7,13 +7,27 @@ Notation :
     Paramètres génératifs (manipulés) : S_mv, D_mv, E_mv, P_mv
     Descripteurs émergents (réalisés)  : D, I, V, S, E, P
 
-Calibration v2 :
-    - SWING_MAX_RATIO augmenté (0.12 → 0.20) : swing max ~13ms à 90bpm,
-      au-dessus du seuil de détection pour non-musiciens (Honing & Ladinig 2009)
-    - Humanisation de vélocité introduite via MicroTiming.humanize_velocities(),
-      liée à E_mv — cohérent avec l'extension de la définition de E_mv
-      aux "déviations expressives" (timing + dynamique, Gabrielsson 1999)
-    - Kick et snare inchangés (cadre d'ancrage invariant, cf. §2.2.2 du mémoire)
+Correction v4 :
+    G1 — Seeds isolées par voix :
+         Avant : hihat(seed=seed+i) où i est l'index global du stimulus.
+                 → la seed du hi-hat et celle du MicroTiming partagent le
+                   même espace, créant des corrélations implicites entre
+                   la structure rythmique et le micro-timing.
+                 → deux conditions identiques avec i différents produisent
+                   des patterns différents, violant la reproductibilité.
+         Après : chaque voix reçoit une seed dérivée de façon déterministe
+                 depuis (base_seed, stimulus_index, voice_id) via un hash simple.
+                 hihat_seed  = _derive_seed(seed, i, 0)
+                 timing_seed = _derive_seed(seed, i, 1)
+                 → isolation complète entre voix
+                 → reproductibilité garantie pour un (seed, i) donné
+                 → inchangé comportement externe (même API)
+
+    G2 — stim_id inclus dans metadata.csv dès la génération :
+         Avant : stim_id était ajouté dans run_experiment() mais pas dans
+                 build_audio_map() → metadata.csv manquait parfois la colonne.
+         Après : stim_id est systématiquement présent dans rows[i] et
+                 survivra à df.to_csv().
 """
 
 from __future__ import annotations
@@ -24,6 +38,29 @@ import numpy as np
 import pandas as pd
 
 import config
+
+
+# =========================================================
+# SEED ISOLATION
+# =========================================================
+
+def _derive_seed(base_seed: int, stim_index: int, voice_id: int) -> int:
+    """
+    Dérive une seed déterministe et isolée pour une voix d'un stimulus.
+
+    Utilise un hash simple (pas de collisions dans l'espace pratique) :
+        seed = (base_seed * 1_000_003 + stim_index * 997 + voice_id) % 2**31
+
+    Propriétés :
+        - Déterministe : même (base_seed, stim_index, voice_id) → même seed
+        - Isolée : voice_id différent → seeds décorrélées
+        - Légère : pas de dépendance à hashlib
+
+    voice_id convention :
+        0 → hihat pattern
+        1 → micro-timing (MicroTiming.rng)
+    """
+    return int((base_seed * 1_000_003 + stim_index * 997 + voice_id) % (2 ** 31))
 
 
 # =========================================================
@@ -62,8 +99,7 @@ class Voices:
     def kick(self) -> np.ndarray:
         """
         Kick invariant sur tous les stimuli — cadre d'ancrage métrique.
-        Beats 1 et 3 uniquement (cf. §2.2.2 du mémoire : structure
-        métrique globale comme référence perceptive stable).
+        Beats 1 et 3 uniquement (cf. §2.2.2 du mémoire).
         """
         p, bar = self._empty(), self.steps_per_bar
         for b in range(self.total_steps // bar):
@@ -73,13 +109,10 @@ class Voices:
         return p
 
     def bass(self) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-        """
-        Basse invariante sur tous les stimuli (cf. §2.2.2 du mémoire :
-        "celle-ci reproduit à l'identique son motif sur l'ensemble des stimuli").
-        """
-        bar    = self.steps_per_bar
-        n      = self.total_steps
-        sd     = config.step_duration_seconds()
+        """Basse invariante sur tous les stimuli (cf. §2.2.2 du mémoire)."""
+        bar = self.steps_per_bar
+        n   = self.total_steps
+        sd  = config.step_duration_seconds()
 
         pat_bar  = np.array(config.BASS_PATTERN_BAR,  dtype=np.float64)
         int_bar  = np.array(config.BASS_INTERVAL_BAR, dtype=np.float64)
@@ -94,10 +127,7 @@ class Voices:
         return pattern, pitch, velocity, duration
 
     def snare(self) -> np.ndarray:
-        """
-        Snare invariante — backbeat positions 4 et 12.
-        Cadre d'ancrage métrique, inchangé entre conditions.
-        """
+        """Snare invariante — backbeat positions 4 et 12."""
         p, bar = self._empty(), self.steps_per_bar
         for b in range(self.total_steps // bar):
             o = b * bar
@@ -112,28 +142,39 @@ class Voices:
         seed:          int | None = None,
     ) -> np.ndarray:
         """
-        Hi-hat : seule voix portant la variabilité entre stimuli.
-        Structure stochastique pilotée par S_mv (syncopation) et D_mv (densité).
+        Hi-hat probabiliste calibré perceptivement.
+
+        Args:
+            seed : seed ISOLÉE pour ce hi-hat — doit être _derive_seed(base, i, 0)
+                   et non seed+i (qui corrèle avec le timing, cf. G1).
         """
         rng       = np.random.default_rng(seed)
-        base_prob = config.HIHAT_DENSITY_PROBS.get(density_level, 0.50)
+        base_prob = config.HIHAT_DENSITY_PROBS.get(density_level, 0.55)
         alpha     = config.alpha_from_sync_level(sync_level)
 
         metric_weight_bar  = config.METRIC_PROFILE / config.METRIC_PROFILE.max()
         metric_weight_loop = np.tile(metric_weight_bar, config.LOOP_BARS)
 
-        eighth_bar      = np.zeros(self.steps_per_bar)
-        eighth_bar[::2] = 1.0
-        eighth_loop     = np.tile(eighth_bar, config.LOOP_BARS)
+        strong    = metric_weight_loop
+        weak      = 1.0 - metric_weight_loop
+        prob_loop = base_prob * ((1.0 - alpha) * strong + alpha * weak)
 
-        struct    = eighth_loop * metric_weight_loop
-        anti      = 1.0 - metric_weight_loop
-        prob_loop = base_prob * ((1.0 - alpha) * struct + alpha * anti)
-        prob_loop = np.clip(prob_loop, config.HIHAT_PROB_MIN, config.HIHAT_PROB_MAX)
+        eighth_bias      = np.zeros(self.loop_steps)
+        eighth_bias[::2] = 0.10
+        prob_loop       += eighth_bias
+        prob_loop        = np.clip(prob_loop, config.HIHAT_PROB_MIN, config.HIHAT_PROB_MAX)
 
         loop_pattern = (rng.random(self.loop_steps) < prob_loop).astype(np.float64)
-        pattern      = np.tile(loop_pattern, self.n_loops)
-        return pattern[: self.total_steps]
+
+        max_hits = {0: 5, 1: 10, 2: 15}.get(density_level, 10)
+        hits     = np.where(loop_pattern == 1)[0]
+
+        if len(hits) > max_hits:
+            to_remove = rng.choice(hits, size=len(hits) - max_hits, replace=False)
+            loop_pattern[to_remove] = 0
+
+        pattern = np.tile(loop_pattern, self.n_loops)
+        return pattern[:self.total_steps]
 
 
 # =========================================================
@@ -142,26 +183,15 @@ class Voices:
 
 class MicroTiming:
     """
-    Swing total = (SWING_BASELINE + SWING_MAX_RATIO × amount) × step_duration
+    Micro-timing expressif lié à E_mv.
 
-    Calibration v2 :
-        E_mv=0   → swing baseline ~2.6ms  (tight, quasi-robotique)
-        E_mv=0.5 → swing total    ~9.2ms  (perceptible)
-        E_mv=1.0 → swing total    ~15.5ms (swing jazz/funk audible,
-                                           au-dessus du seuil ~10–15ms)
-
-    Extension de la définition de E_mv aux fluctuations de vélocité :
-        humanize_velocities() modélise les micro-variations de dynamique
-        observées chez les batteurs humains (Gabrielsson 1999).
-        sigma_base=8 pts MIDI à E_mv=1.0 (~10%) — perceptible globalement
-        sans masquer les différences structurelles entre stimuli.
+    Le rng interne est initialisé depuis une seed ISOLÉE (_derive_seed(base, i, 1))
+    pour éviter toute corrélation avec le hi-hat pattern (cf. G1).
     """
 
     def __init__(self, rng: np.random.Generator, step_duration: float) -> None:
         self.rng           = rng
         self.step_duration = step_duration
-
-    # ── Micro-timing temporel ──────────────────────────────
 
     def apply(
         self,
@@ -177,9 +207,13 @@ class MicroTiming:
 
         sd = self.step_duration
 
-        swing_total = (config.SWING_BASELINE + config.SWING_MAX_RATIO * (amount ** 0.7)) * sd
+        swing_total = (
+            config.SWING_BASELINE
+            + config.SWING_MAX_RATIO * (amount ** 0.7)
+        ) * sd
+
         swing       = np.zeros(n)
-        swing[2::4] = swing_total
+        swing[1::2] = swing_total * 0.6
 
         if amount > 0.0:
             phase = self.rng.uniform(0.0, 2.0 * np.pi)
@@ -226,43 +260,27 @@ class MicroTiming:
 
         return jitters
 
-    # ── Humanisation de la vélocité ────────────────────────
-
     def humanize_velocities(
         self,
-        vel_array: np.ndarray,
-        amount:    float,
-        sigma_base: float = None,
+        vel_array:  np.ndarray,
+        amount:     float,
+        sigma_base: float | None = None,
     ) -> np.ndarray:
-        """
-        Fluctuations de vélocité liées à E_mv.
-
-        Modélise les micro-variations de dynamique observées chez les
-        batteurs humains (Gabrielsson 1999). Étend la définition de E_mv
-        — "amplitude des déviations expressives" — au-delà du seul timing.
-
-        Args:
-            vel_array  : vélocités originales (pts MIDI, 1–127)
-            amount     : E_mv normalisé [0.0–1.0]
-            sigma_base : sigma à amount=1.0 (défaut : config.VELOCITY_HUMANIZE_SIGMA)
-
-        Returns:
-            Vélocités humanisées, clampées dans [1, 127].
-        """
         if sigma_base is None:
             sigma_base = config.VELOCITY_HUMANIZE_SIGMA
 
         if amount < 1e-3:
             return vel_array.copy()
 
-        # On n'applique du bruit que sur les positions où il y a un hit
         active = vel_array > 0
         result = vel_array.copy().astype(np.float64)
 
         if active.any():
-            noise             = self.rng.normal(0.0, sigma_base * amount, size=int(active.sum()))
-            result[active]   += noise
-            result[active]    = np.clip(result[active], 1, 127)
+            noise           = self.rng.normal(
+                0.0, sigma_base * amount, size=int(active.sum())
+            )
+            result[active] += noise
+            result[active]  = np.clip(result[active], 1, 127)
 
         return result
 
@@ -277,6 +295,13 @@ class Stimulus:
         self.micro  = micro
 
     def build(self, cfg: dict, seed: int) -> dict:
+        """
+        Args:
+            seed : seed ISOLÉE pour le timing de ce stimulus.
+                   Doit être _derive_seed(base_seed, stim_index, 1).
+                   Le hi-hat utilise _derive_seed(base_seed, stim_index, 0)
+                   — passé séparément via hihat(seed=hihat_seed).
+        """
         E_mv  = cfg["E_mv"]
         P_mv  = cfg.get("P_mv", 0)
 
@@ -288,19 +313,15 @@ class Stimulus:
         hihat = self.voices.hihat(
             sync_level=cfg["S_mv"],
             density_level=cfg["D_mv"],
-            seed=seed,
+            seed=seed,   # ← seed déjà isolée (voice_id=0) passée depuis run_experiment
         )
 
-        # ── Micro-timing temporel ────────────────────────────
         kick_j  = self.micro.apply(
             kick,
             amount=E_mv * config.KICK_TIMING_SCALE,
             voice_weight=config.KICK_VOICE_WEIGHT,
         )
-        bass_j = self.micro.apply(
-            bass,
-            amount=E_mv * config.BASS_TIMING_SCALE,
-        )
+        bass_j  = self.micro.apply_bass(bass, amount=E_mv)
         snare_j = self.micro.apply(
             snare,
             amount=E_mv * config.SNARE_TIMING_SCALE,
@@ -315,12 +336,9 @@ class Stimulus:
         hihat_hits          = hihat == 1.0
         hihat_j[hihat_hits] += hihat_push_s
 
-        # ── Humanisation des vélocités (E_mv) ────────────────
-        # Vélocités de base par voix (identiques à la v1 à E_mv=0)
-        kick_vel_base  = np.where(kick  == 1.0, 95.0, 0.0)
-        snare_vel_base = np.where(snare == 1.0, 90.0, 0.0)
-        hihat_vel_base = np.where(hihat == 1.0, 80.0, 0.0)
-        # La basse a ses propres vélocités issues de BASS_VELOCITY_BAR
+        kick_vel_base  = np.where(kick  == 1.0, 100.0, 0.0)
+        snare_vel_base = np.where(snare == 1.0,  95.0, 0.0)
+        hihat_vel_base = np.where(hihat == 1.0,  72.0, 0.0)
 
         kick_vel  = self.micro.humanize_velocities(kick_vel_base,  amount=E_mv)
         snare_vel = self.micro.humanize_velocities(snare_vel_base, amount=E_mv)
@@ -335,11 +353,9 @@ class Stimulus:
             "bass_dur":     bass_dur,
             "snare":        snare,
             "hihat":        hihat,
-            # Vélocités humanisées
             "kick_vel":     kick_vel,
             "snare_vel":    snare_vel,
             "hihat_vel":    hihat_vel,
-            # Jitters temporels
             "kick_jitter":  kick_j,
             "bass_jitter":  bass_j,
             "snare_jitter": snare_j,
@@ -492,8 +508,6 @@ def run_experiment(
 
     grid    = Grid()
     voices  = Voices(grid, seed=seed)
-    micro   = MicroTiming(rng, grid.step_duration)
-    builder = Stimulus(voices, micro)
     metrics = Metrics(grid.step_duration)
 
     design = build_design(n_repeats=n_repeats)
@@ -504,11 +518,26 @@ def run_experiment(
     cache: dict[int, dict] = {}
 
     for i, cfg in enumerate(design):
-        stim     = builder.build(cfg, seed=seed + i)
+        # ── Seeds isolées par voix (correction G1) ─────────────
+        # voice_id=0 : pattern hi-hat (stochastique)
+        # voice_id=1 : micro-timing (MicroTiming.rng)
+        # Chaque voix a un espace de seed indépendant → pas de corrélation
+        # entre la structure rythmique et le micro-timing.
+        hihat_seed  = _derive_seed(seed, i, 0)
+        timing_seed = _derive_seed(seed, i, 1)
+
+        micro   = MicroTiming(
+            rng=np.random.default_rng(timing_seed),
+            step_duration=grid.step_duration,
+        )
+        builder = Stimulus(voices, micro)
+        stim    = builder.build(cfg, seed=hihat_seed)
+
         cache[i] = stim
 
         rows[i] = {
             "id":      i,
+            # G2 — stim_id toujours présent dans metadata.csv
             "stim_id": f"stim_{i:04d}",
             "phase":   cfg["phase"],
             "repeat":  cfg["repeat"],
@@ -525,6 +554,7 @@ def run_experiment(
             "E":       metrics.micro_E(stim),
             "P":       metrics.inter_voice_push(stim),
             "BPM":     grid.bpm,
+            # Patterns (utiles pour PatternEmbedding)
             "kick":    stim["kick"].tolist(),
             "snare":   stim["snare"].tolist(),
             "hihat":   stim["hihat"].tolist(),

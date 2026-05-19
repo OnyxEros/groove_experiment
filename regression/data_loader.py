@@ -13,8 +13,8 @@ Pipeline (brut, pour LMM) :
                                            + musical_background (si disponible)
 
 Features disponibles :
-    Design (manipulés) : S_mv, D_mv, E, P
-    Acoustic (réalisés): D, I, V, S_real, E_real, P_real
+    Design (manipulés) : S_mv, D_mv, E_mv, P_mv
+    Acoustic (réalisés): D, I, V, S, E, P
 
 Target :
     groove_mean  — moyenne des ratings groove par stim_id (agrégé)
@@ -71,16 +71,31 @@ def _resolve_stim_id(meta: pd.DataFrame) -> pd.DataFrame:
 
 # =========================================================
 # RÉTRO-COMPATIBILITÉ ancienne notation
+#
+# RÈGLE : on ne renomme une colonne que si la cible n'existe PAS déjà.
+# Cela évite d'écraser un descripteur émergent (ex. "E") par un
+# paramètre génératif (ex. "E_mv") si les deux colonnes sont présentes.
 # =========================================================
 
 def _compat_rename(df: pd.DataFrame) -> pd.DataFrame:
-    return df.rename(columns={
+    rename_map = {
+        # Ancienne notation des descripteurs émergents
         "S_real": "S",
         "E_real": "E",
         "P_real": "P",
-        "E":      "E_mv",
-        "P":      "P_mv",
-    }, errors="ignore")
+        # Ancienne notation BPM
+        "bpm":    "BPM",
+        "Bpm":    "BPM",
+    }
+    # N'applique le renommage que si la source existe ET la cible est absente
+    safe_map = {
+        src: dst
+        for src, dst in rename_map.items()
+        if src in df.columns and dst not in df.columns
+    }
+    if safe_map:
+        print(f"[data_loader] _compat_rename : {safe_map}")
+    return df.rename(columns=safe_map)
 
 
 # =========================================================
@@ -180,9 +195,11 @@ def load_raw_responses(
         print("  [LMM data] aucune feature disponible")
         return None
 
+    from config import RT_MIN_S, RT_MAX_S
+
     if "rt" in df.columns:
         df = df[
-            df["rt"].between(4.0, 600.0, inclusive="both") | df["rt"].isna()
+            df["rt"].between(RT_MIN_S, RT_MAX_S, inclusive="both") | df["rt"].isna()
         ].copy()
 
     # ── Colonnes à conserver ──────────────────────────────
@@ -191,19 +208,17 @@ def load_raw_responses(
     # Inclure musical_background si disponible — sera dummy-encodé dans fit_lmm
     if "musical_background" in df.columns and df["musical_background"].notna().any():
         keep_cols.append("musical_background")
-        # Normalise en catégorie ordonnée pour un dummy encoding cohérent
         df["musical_background"] = pd.Categorical(
             df["musical_background"],
             categories=BACKGROUND_ORDER,
             ordered=True,
         )
-        n_bg = df["musical_background"].notna().sum()
+        n_bg   = df["musical_background"].notna().sum()
         n_miss = df["musical_background"].isna().sum()
         print(
             f"  [LMM data] musical_background : {n_bg} réponses renseignées"
             + (f", {n_miss} manquantes (ignorées)" if n_miss > 0 else "")
         )
-        # Distribution
         dist = df["musical_background"].value_counts().to_dict()
         print(f"  [LMM data] distribution : {dist}")
 
@@ -230,6 +245,12 @@ def _select_features(df: pd.DataFrame, feature_set: str) -> list[str]:
 
     available = [f for f in candidates if f in df.columns]
     absent    = set(candidates) - set(available)
+
+    # Exclure les features à variance nulle (ex. BPM constant)
+    zero_var = [f for f in available if df[f].std() < 1e-10]
+    if zero_var:
+        print(f"[data_loader] Features à variance nulle exclues : {zero_var}")
+        available = [f for f in available if f not in zero_var]
 
     if absent:
         print(f"[data_loader] Features absentes ignorées : {sorted(absent)}")
@@ -268,10 +289,9 @@ def describe_dataset(df: pd.DataFrame, features: list[str]) -> None:
     print(f"{'─'*w}\n")
 
 
-RT_MIN_S = 4.0
-RT_MAX_S = 600.0
 
-
+from config import RT_MIN_S, RT_MAX_S   # source de vérité unique
+ 
 def filter_valid_responses(df):
     before = len(df)
     if "rt" in df.columns:
