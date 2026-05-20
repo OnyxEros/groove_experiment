@@ -96,6 +96,19 @@ async def lifespan(app: FastAPI):
 
     print(f"✅ {len(app.state.valid_stim_ids)} stim_id valides chargés")
 
+    # Exemple de familiarisation pré-calculé au démarrage.
+    # Critère : condition centrale du design (S_mv=1, D_mv=1, E_mv=0.5).
+    # Aucune valence communiquée au participant — juste "voici à quoi
+    # ressemble un extrait, voici comment fonctionne l'interface".
+    app.state.example_familiarization = _pick_familiarization_example(df)
+    ex = app.state.example_familiarization
+    print(
+        f"🎯 Exemple familiarisation → {ex.get('stim_id', '?')}"
+        f" (S_mv={ex.get('S_mv', '?')},"
+        f" D_mv={ex.get('D_mv', '?')},"
+        f" E_mv={ex.get('E_mv', '?')})"
+    )
+
     if DESIGN_MODE:
         try:
             registry = StimulusRegistry()
@@ -125,7 +138,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="Groove Study API",
-    version="2.3.0",
+    version="2.4.0",
     lifespan=lifespan,
 )
 
@@ -139,6 +152,75 @@ def _client_ip(request: Request) -> str:
     if forwarded:
         return forwarded.split(",")[0].strip()
     return request.client.host if request.client else "unknown"
+
+
+def _pick_familiarization_example(df: pd.DataFrame) -> pd.Series:
+    """
+    Sélectionne un stimulus de familiarisation neutre.
+
+    Objectif : permettre au participant de s'accoutumer au format audio
+    et à l'interface SANS ancrer les extrêmes de l'échelle groove.
+    Le stimulus doit être "typique" du pool — ni particulièrement groovy
+    ni particulièrement mécanique.
+
+    Stratégie (par priorité décroissante) :
+        1. S_mv=1 & D_mv=1 & E_mv=0.5   condition centrale du design 3³,
+                                          n≈46/128 dans ce dataset.
+                                          Syncopation mixte, densité moyenne,
+                                          micro-timing modéré.
+        2. S_mv=1 & D_mv=1              centrale sans contrainte sur E_mv
+        3. S_mv=1                        syncopation médiane
+        4. stimulus dont S réalisé est   fallback pur sur les données
+           le plus proche de la médiane
+
+    Tiebreak : parmi les candidats d'un niveau, on prend celui dont S
+    réalisé est le plus proche de la médiane globale de S — assure un
+    stimulus "au milieu du pool" même s'il y a plusieurs candidats.
+    """
+    has_design = {"S_mv", "D_mv", "E_mv"}.issubset(df.columns)
+    s_median   = df["S"].median() if "S" in df.columns else None
+
+    if not has_design:
+        if s_median is not None:
+            idx = (df["S"] - s_median).abs().idxmin()
+            return df.loc[idx]
+        return df.iloc[len(df) // 2]
+
+    for mask in [
+        (df["S_mv"] == 1) & (df["D_mv"] == 1) & (df["E_mv"] == 0.5),
+        (df["S_mv"] == 1) & (df["D_mv"] == 1),
+        (df["S_mv"] == 1),
+    ]:
+        candidates = df[mask].copy()
+        if len(candidates) == 0:
+            continue
+        if s_median is not None and "S" in candidates.columns:
+            candidates["_dist"] = (candidates["S"] - s_median).abs()
+            candidates = candidates.sort_values("_dist")
+        return candidates.iloc[0]
+
+    # Fallback final : stimulus le plus proche de la médiane de S
+    if s_median is not None:
+        idx = (df["S"] - s_median).abs().idxmin()
+        return df.loc[idx]
+
+    return df.iloc[len(df) // 2]
+
+
+def _example_response(row: pd.Series) -> dict:
+    audio_file = (
+        row["audio_file"]
+        if "audio_file" in row.index
+        else f"stim_{int(row.get('id', 0)):04d}.mp3"
+    )
+    return {
+        "audio_url": f"/audio/{audio_file}",
+        "stim_id":   str(row.get("stim_id", row.get("id", "unknown"))),
+        "S_mv":      int(row["S_mv"])   if "S_mv" in row.index else None,
+        "D_mv":      int(row["D_mv"])   if "D_mv" in row.index else None,
+        "E_mv":      float(row["E_mv"]) if "E_mv" in row.index else None,
+        "P_mv":      int(row["P_mv"])   if "P_mv" in row.index else None,
+    }
 
 
 # =========================================================
@@ -219,52 +301,18 @@ async def get_stimuli(
 @app.get("/example", tags=["experiment"])
 async def get_example(request: Request):
     """
-    Retourne le stimulus d'exemple (groove fort).
+    Retourne le stimulus de familiarisation (pré-calculé au démarrage).
 
-    Post-refactor notation :
-        - On filtre sur E_mv (paramètre génératif micro-timing) = 1.0
-          et S_mv (syncopation manipulée) = 2 pour garantir un groove fort.
-        - Fallback : stimulus avec la syncopation réalisée (S) maximale.
-        - S_real n'existe plus — remplacé par S (descripteur émergent).
+    Stimulus intentionnellement neutre : condition centrale du design
+    (S_mv=1, D_mv=1, E_mv=0.5), représentatif du pool sans être
+    remarquable dans aucune direction.
+
+    Aucune valence n'est communiquée au participant côté interface :
+    l'exemple sert uniquement à se familiariser avec le format audio
+    et les curseurs, pas à ancrer les extrêmes de l'échelle.
     """
     await _check_rate_limit(_client_ip(request))
-
-    df: pd.DataFrame = app.state.df_global
-
-    # Sélection d'un exemple à groove élevé
-    # Utilise S_mv et E_mv (génératifs) pour le filtre — toujours présents
-    has_design_cols = {"S_mv", "D_mv", "E_mv"}.issubset(df.columns)
-
-    if has_design_cols:
-        mask       = (df["S_mv"] == 2) & (df["D_mv"] == 2) & (df["E_mv"] == 1.0)
-        candidates = df[mask]
-
-        if not candidates.empty:
-            # Parmi les candidats, prendre celui avec la syncopation émergente max
-            # S est le descripteur émergent (anciennement S_real)
-            if "S" in candidates.columns:
-                row = candidates.loc[candidates["S"].idxmax()]
-            else:
-                row = candidates.iloc[0]
-        else:
-            # Fallback : S_mv le plus élevé
-            row = df.loc[df["S_mv"].idxmax()]
-    else:
-        row = df.iloc[0]
-
-    audio_file = (
-        row["audio_file"]
-        if "audio_file" in row
-        else f"stim_{int(row['id']):04d}.mp3"
-    )
-
-    return {
-        "audio_url": f"/audio/{audio_file}",
-        "stim_id":   str(row.get("stim_id", row.get("id", "unknown"))),
-        "S_mv":      int(row["S_mv"])   if "S_mv"  in row else None,
-        "D_mv":      int(row["D_mv"])   if "D_mv"  in row else None,
-        "E_mv":      float(row["E_mv"]) if "E_mv"  in row else None,
-    }
+    return _example_response(app.state.example_familiarization)
 
 
 @app.post("/response", tags=["experiment"])
