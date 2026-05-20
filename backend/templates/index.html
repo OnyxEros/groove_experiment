@@ -111,7 +111,7 @@
     .screen { display: none; }
     .screen.active { display: block; }
 
-    /* ── CONSENT ────────────────────────────────────── */
+    /* ── SECTION TAG ────────────────────────────────── */
     .section-tag {
       font-family: 'DM Mono', monospace;
       font-size: 10px;
@@ -121,6 +121,7 @@
       margin-bottom: 20px;
     }
 
+    /* ── HERO ───────────────────────────────────────── */
     h1.hero {
       font-size: clamp(28px, 6vw, 40px);
       font-weight: 600;
@@ -133,6 +134,7 @@
       color: var(--accent);
     }
 
+    /* ── INFO BLOCKS ────────────────────────────────── */
     .info-blocks { display: flex; flex-direction: column; gap: 16px; margin-bottom: 28px; }
 
     .info-block {
@@ -145,13 +147,7 @@
       background: rgba(255,255,255,0.02);
     }
 
-    .info-block-icon {
-      font-size: 18px;
-      flex-shrink: 0;
-      margin-top: 1px;
-    }
-
-    .info-block-body {}
+    .info-block-icon { font-size: 18px; flex-shrink: 0; margin-top: 1px; }
     .info-block-label {
       font-family: 'DM Mono', monospace;
       font-size: 10px;
@@ -166,6 +162,7 @@
     }
     .info-block-text strong { color: var(--text); font-weight: 500; }
 
+    /* ── CONSENT ────────────────────────────────────── */
     .consent-check-row {
       display: flex;
       align-items: center;
@@ -215,23 +212,10 @@
     .btn.secondary:hover:not(:disabled) { background: rgba(255,255,255,0.04); opacity: 1; }
 
     /* ── BAGAGE MUSICAL ─────────────────────────────── */
-    .bg-options {
-      display: flex;
-      flex-direction: column;
-      gap: 10px;
-      margin-bottom: 28px;
-    }
+    .bg-options { display: flex; flex-direction: column; gap: 10px; margin-bottom: 28px; }
 
-    .bg-option {
-      display: block;
-      cursor: pointer;
-    }
-
-    .bg-option input[type="radio"] {
-      position: absolute;
-      opacity: 0;
-      pointer-events: none;
-    }
+    .bg-option { display: block; cursor: pointer; }
+    .bg-option input[type="radio"] { position: absolute; opacity: 0; pointer-events: none; }
 
     .bg-card {
       display: flex;
@@ -244,36 +228,15 @@
       transition: border-color 0.15s, background 0.15s;
       cursor: pointer;
     }
-
-    .bg-card:hover {
-      background: rgba(255,255,255,0.04);
-      border-color: rgba(49,56,255,0.3);
-    }
-
+    .bg-card:hover { background: rgba(255,255,255,0.04); border-color: rgba(49,56,255,0.3); }
     .bg-option input[type="radio"]:checked + .bg-card {
       border-color: var(--accent);
       background: rgba(49,56,255,0.08);
     }
 
-    .bg-icon {
-      font-size: 20px;
-      flex-shrink: 0;
-      margin-top: 2px;
-    }
-
-    .bg-body {}
-
-    .bg-title {
-      font-size: 14px;
-      font-weight: 500;
-      margin-bottom: 3px;
-    }
-
-    .bg-desc {
-      font-size: 12px;
-      color: var(--muted);
-      line-height: 1.5;
-    }
+    .bg-icon { font-size: 20px; flex-shrink: 0; margin-top: 2px; }
+    .bg-title { font-size: 14px; font-weight: 500; margin-bottom: 3px; }
+    .bg-desc { font-size: 12px; color: var(--muted); line-height: 1.5; }
 
     /* ── INTRO ──────────────────────────────────────── */
     h2.section-title {
@@ -289,9 +252,18 @@
       line-height: 1.55;
     }
 
-    .example-wrap {
-      margin-bottom: 28px;
+    /* Note méthodologique — visible uniquement dans cette zone */
+    .method-note {
+      font-size: 12px;
+      color: var(--muted);
+      font-style: italic;
+      border-left: 2px solid rgba(255,255,255,0.1);
+      padding-left: 12px;
+      margin-bottom: 24px;
+      line-height: 1.55;
     }
+
+    .example-wrap { margin-bottom: 28px; }
     .example-label {
       font-family: 'DM Mono', monospace;
       font-size: 10px;
@@ -299,17 +271,12 @@
       color: var(--muted);
       margin-bottom: 10px;
     }
-    #example-container,
-    #example-low-container {
+    #example-container {
       min-height: 72px;
       display: flex;
       align-items: center;
     }
-    .example-loading {
-      font-size: 13px;
-      color: var(--muted);
-      font-family: 'DM Mono', monospace;
-    }
+    .example-loading { font-size: 13px; color: var(--muted); font-family: 'DM Mono', monospace; }
 
     /* ── PLAYER ─────────────────────────────────────── */
     .player {
@@ -342,17 +309,9 @@
     .play-btn.playing { background: var(--accent2); }
 
     .player-info { flex: 1; min-width: 0; }
-    .player-meta {
-      display: flex;
-      justify-content: space-between;
-      margin-bottom: 6px;
-    }
+    .player-meta { display: flex; justify-content: space-between; margin-bottom: 6px; }
     .player-title { font-size: 13px; font-weight: 500; }
-    .player-time {
-      font-family: 'DM Mono', monospace;
-      font-size: 11px;
-      color: var(--muted);
-    }
+    .player-time { font-family: 'DM Mono', monospace; font-size: 11px; color: var(--muted); }
 
     .player-bar-track {
       height: 3px;
@@ -360,7 +319,6 @@
       border-radius: 3px;
       overflow: hidden;
       margin-bottom: 8px;
-      cursor: pointer;
     }
     .player-bar-fill {
       height: 100%;
@@ -369,12 +327,7 @@
       transition: width 0.2s linear;
     }
 
-    .waveform {
-      display: flex;
-      align-items: center;
-      gap: 2px;
-      height: 18px;
-    }
+    .waveform { display: flex; align-items: center; gap: 2px; height: 18px; }
     .waveform span {
       display: block;
       width: 3px;
@@ -402,7 +355,7 @@
     /* ── CALIBRATION ────────────────────────────────── */
     .calib-sliders { display: flex; flex-direction: column; gap: 24px; margin-bottom: 28px; }
 
-    /* ── SLIDERS (task) ─────────────────────────────── */
+    /* ── SLIDERS ────────────────────────────────────── */
     .slider-block { margin-bottom: 24px; }
     .slider-header {
       display: flex;
@@ -421,8 +374,6 @@
       min-width: 36px;
       text-align: center;
     }
-
-    /* ── Sous-titre des sliders (hint) ──────────────── */
     .slider-hint {
       font-size: 11px;
       color: var(--muted);
@@ -430,7 +381,6 @@
       margin-bottom: 8px;
       line-height: 1.4;
     }
-
     .slider-anchors {
       display: flex;
       justify-content: space-between;
@@ -470,11 +420,7 @@
     }
 
     /* ── DIVIDER ────────────────────────────────────── */
-    .divider {
-      height: 1px;
-      background: var(--border);
-      margin: 24px 0;
-    }
+    .divider { height: 1px; background: var(--border); margin: 24px 0; }
 
     /* ── FIXATION ───────────────────────────────────── */
     .fixation {
@@ -489,10 +435,7 @@
     }
 
     /* ── THANKS ─────────────────────────────────────── */
-    .thanks {
-      text-align: center;
-      padding: 16px 0;
-    }
+    .thanks { text-align: center; padding: 16px 0; }
     .thanks-icon { font-size: 40px; margin-bottom: 20px; }
     .thanks h2 { font-size: 22px; margin-bottom: 10px; }
     .thanks p { font-size: 14px; color: var(--muted); line-height: 1.6; }
@@ -514,10 +457,10 @@
 
   <div class="topbar">
     <div class="logo">GROOVE<span>STUDY</span></div>
-    <div class="badge">v2.3 · EMC TSMA2</div>
+    <div class="badge">v2.4 · EMC TSMA2</div>
   </div>
 
-  <!-- PROGRESS (caché sur écrans non-task) -->
+  <!-- PROGRESS -->
   <div class="progress-wrap" id="progress-wrap" style="display:none">
     <div class="progress-meta">
       <span id="counter-left">Extrait 1 / 30</span>
@@ -601,7 +544,6 @@
     </p>
 
     <div class="bg-options">
-
       <label class="bg-option">
         <input type="radio" name="bg" value="non_musician" onchange="onBgChange()">
         <div class="bg-card">
@@ -612,7 +554,6 @@
           </div>
         </div>
       </label>
-
       <label class="bg-option">
         <input type="radio" name="bg" value="amateur" onchange="onBgChange()">
         <div class="bg-card">
@@ -623,7 +564,6 @@
           </div>
         </div>
       </label>
-
       <label class="bg-option">
         <input type="radio" name="bg" value="semi_pro" onchange="onBgChange()">
         <div class="bg-card">
@@ -634,7 +574,6 @@
           </div>
         </div>
       </label>
-
       <label class="bg-option">
         <input type="radio" name="bg" value="pro" onchange="onBgChange()">
         <div class="bg-card">
@@ -645,7 +584,6 @@
           </div>
         </div>
       </label>
-
     </div>
 
     <button class="btn" id="bg-btn" onclick="submitBackground()" disabled>
@@ -655,27 +593,25 @@
 
   <!-- ══ ÉCRAN INTRO ══ -->
   <div id="screen-intro" class="card screen">
-    <div class="section-tag">Introduction</div>
+    <div class="section-tag">Prise en main</div>
     <h2 class="section-title">Comment ça marche ?</h2>
     <p class="section-sub">
-      Pour chaque extrait, tu évalueras deux choses :<br>
-      ton <strong>envie de bouger</strong> (hocher la tête, taper du pied, danser)
-      et la <strong>complexité</strong> perçue du rythme.<br>
-      Écoute les deux exemples ci-dessous pour calibrer ton oreille.
+      Pour chaque extrait, tu évalueras ton <strong>envie de bouger</strong>
+      (hocher la tête, taper du pied, danser) et la <strong>complexité</strong>
+      perçue du rythme, sur une échelle de 1 à 7.
     </p>
 
-    <!-- Exemple groove fort -->
+    <!--
+      Note méthodologique (non affichée au participant) :
+      Un seul exemple neutre — condition centrale du design (S_mv=1, D_mv=1, E_mv=0.5).
+      Aucune valence communiquée : l'objectif est la familiarisation avec le format
+      audio et l'interface, pas l'ancrage des extrêmes de l'échelle groove.
+      Référence : Witek et al. (2017) recommandent une phase de familiarisation
+      sans instruction de valence pour préserver la spontanéité du jugement.
+    -->
     <div class="example-wrap">
-      <div class="example-label">EXEMPLE A — forte envie de bouger</div>
+      <div class="example-label">EXTRAIT D'EXEMPLE — écoute pour te familiariser</div>
       <div id="example-container">
-        <div class="example-loading">Chargement…</div>
-      </div>
-    </div>
-
-    <!-- Exemple groove faible -->
-    <div class="example-wrap">
-      <div class="example-label">EXEMPLE B — faible envie de bouger</div>
-      <div id="example-low-container">
         <div class="example-loading">Chargement…</div>
       </div>
     </div>
@@ -696,8 +632,6 @@
     </p>
 
     <div class="calib-sliders">
-
-      <!-- Slider groove calibration -->
       <div class="slider-block">
         <div class="slider-header">
           <span class="slider-label">Envie de bouger</span>
@@ -714,7 +648,6 @@
                oninput="syncSlider(this,'cg-val')">
       </div>
 
-      <!-- Slider complexité calibration -->
       <div class="slider-block">
         <div class="slider-header">
           <span class="slider-label">Complexité</span>
@@ -730,7 +663,6 @@
         <input type="range" id="cc" min="1" max="7" value="4"
                oninput="syncSlider(this,'cc-val')">
       </div>
-
     </div>
 
     <button class="btn" onclick="startExperiment()">

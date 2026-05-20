@@ -8,9 +8,7 @@ const FIXATION_DELAY_MS = 550;
 const MAX_STIMULI       = 30;
 const POOL_SIZE         = 200;
 
-// B3 — durée minimale d'écoute avant autorisation de réponse (en secondes)
-// Aligné sur RT_MIN_S côté serveur (1.5s).
-// Le bouton "Continuer" reste désactivé tant que cette durée n'est pas atteinte.
+// Durée minimale d'écoute avant autorisation de réponse (aligné sur RT_MIN_S serveur)
 const LISTEN_MIN_S = 1.5;
 
 const WAVEFORM_HEIGHTS = [3, 6, 9, 13, 9, 15, 9, 6, 11, 15, 9, 6, 11, 7, 4];
@@ -28,7 +26,7 @@ const state = {
   isSending:          false,
   player:             null,
   listenedSeconds:    0,
-  listenGateOpen:     false,   // B3 : true quand LISTEN_MIN_S atteint
+  listenGateOpen:     false,
   preloadPlayer:      null,
   musicalBackground:  null,
 };
@@ -230,6 +228,7 @@ function showScreen(id) {
 
 /* ══════════════════════════════════════════════════════════
    EXAMPLE PLAYER
+   Un seul exemple neutre — familiarisation sans ancrage de valence.
    ══════════════════════════════════════════════════════════ */
 
 let _exPlayer = null;
@@ -239,19 +238,25 @@ function loadExample() {
   if (!container) return;
 
   fetch('/example')
-    .then(r => r.json())
+    .then(r => {
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      return r.json();
+    })
     .then(s => {
       container.innerHTML = _buildExamplePlayer(
-        'ex', s.audio_url, 'Exemple A — forte envie de bouger', 'toggleExample'
+        'ex', s.audio_url, 'Extrait d\'exemple', 'toggleExample'
       );
       _exPlayer = new AudioPlayer(s.audio_url, {
         onProgress: (ct, dur) => _updatePlayerBar('ex', ct, dur),
         onEnded:    () => _setPlayState('ex', false),
+        onError:    () => _setPlayState('ex', false),
       });
     })
-    .catch(() => {
-      if (container) container.innerHTML =
-        '<div class="example-loading">Exemple non disponible.</div>';
+    .catch(err => {
+      console.warn('Exemple non disponible :', err);
+      if (container) {
+        container.innerHTML = '<div class="example-loading">Exemple non disponible.</div>';
+      }
     });
 }
 
@@ -316,7 +321,7 @@ function render() {
   if (state.player) { state.player.destroy(); state.player = null; }
 
   state.listenedSeconds = 0;
-  state.listenGateOpen  = false;   // B3 : réinitialise le verrou à chaque trial
+  state.listenGateOpen  = false;
 
   const s   = state.stimuli[state.idx];
   const pct = Math.round((state.idx / state.stimuli.length) * 100);
@@ -362,8 +367,6 @@ function _mountTrialPlayer(url) {
       if (hint)   hint.classList.remove('visible');
       if (player) { player.classList.remove('waiting'); player.classList.add('playing'); }
       if (btn)    { btn.textContent = '⏸'; btn.classList.add('playing'); }
-      // B3 : le bouton reste désactivé jusqu'à LISTEN_MIN_S écoutées
-      // (géré dans onProgress)
     },
 
     onProgress: (ct, dur) => {
@@ -372,7 +375,6 @@ function _mountTrialPlayer(url) {
       }
       lastTime = ct;
 
-      // B3 : déverrouille le bouton dès que LISTEN_MIN_S est atteint
       if (!state.listenGateOpen && state.listenedSeconds >= LISTEN_MIN_S) {
         state.listenGateOpen = true;
         const submit = document.getElementById('btn');
@@ -395,8 +397,6 @@ function _mountTrialPlayer(url) {
       const btn    = document.getElementById('play-btn');
       if (player) player.classList.remove('playing');
       if (btn)    { btn.textContent = '▶'; btn.classList.remove('playing'); }
-      // Si l'audio se termine avant LISTEN_MIN_S (audio très court),
-      // on déverrouille quand même le bouton.
       if (!state.listenGateOpen) {
         state.listenGateOpen = true;
         const submit = document.getElementById('btn');
@@ -409,7 +409,6 @@ function _mountTrialPlayer(url) {
     onError: () => {
       const hint   = document.getElementById('autoplay-hint');
       const submit = document.getElementById('btn');
-      // En cas d'erreur audio, on déverrouille pour ne pas bloquer le participant
       if (hint)   { hint.textContent = '⚠ Fichier audio indisponible'; hint.classList.add('visible'); }
       if (submit) { submit.disabled = false; submit.textContent = 'Continuer →'; }
       state.listenGateOpen = true;
@@ -421,7 +420,6 @@ function _mountTrialPlayer(url) {
     const player = document.getElementById('player');
     if (hint)   hint.classList.add('visible');
     if (player) player.classList.add('waiting');
-    // En cas de blocage autoplay, on déverrouille aussi
     const submit = document.getElementById('btn');
     if (submit) { submit.disabled = false; submit.textContent = 'Continuer →'; }
     state.listenGateOpen = true;
@@ -571,7 +569,6 @@ function buildTrialHTML(s, i) {
 
       <div class="autoplay-hint" id="autoplay-hint">▶ Appuie sur le bouton pour écouter</div>
 
-      <!-- B3 : hint d'écoute minimale — disparaît après LISTEN_MIN_S -->
       <div class="autoplay-hint visible" id="listen-hint" style="color:var(--accent2)">
         ♪ Écoute quelques secondes avant de répondre…
       </div>
@@ -608,7 +605,6 @@ function buildTrialHTML(s, i) {
                oninput="syncSlider(this,'cv')">
       </div>
 
-      <!-- B3 : bouton désactivé par défaut, déverrouillé après LISTEN_MIN_S -->
       <button class="btn" onclick="send()" id="btn" disabled>
         Chargement…
       </button>
