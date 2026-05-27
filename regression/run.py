@@ -1,264 +1,274 @@
 """
-regression/run.py
-=================
+regression/run.py  (v3)
+========================
 Point d'entrée du module de régression groove.
 
-Deux modes :
-    run_regression(feature_set)  — un seul feature set
-    run_regression_all()         — les 3 feature sets + figure comparative
-
-Sauve les résultats dans data/analysis/run_<timestamp>/regression/.
-
-v2 (wire-up LMM) :
-    - load_raw_responses() est maintenant appelé et df_raw est passé à fit_models().
-    - Le LMM (statsmodels mixedlm + musical_background) est effectivement entraîné.
+Changements v3 :
+    - Fix LMM interactions : features_for_lmm depuis df_raw.attrs
+    - Comparaison AIC/BIC automatique quand feature_set='interactions' :
+      fit M0 (additif) vs M1 (avec interactions) en ML pour justification
+      formelle de l'inclusion des termes croisés (Burnham & Anderson 2002).
 """
 
 from __future__ import annotations
 
 import numpy as np
 from pathlib import Path
-from datetime import datetime
 
-from regression.data_loader import (
-    load_regression_data,
-    load_raw_responses,
-    describe_dataset,
-)
-from regression.model import fit_models
-from regression.evaluation import evaluate_models, print_report, save_report
-
+from regression.data.loader   import load_aggregated, load_raw_responses, describe_dataset
+from regression.models         import build_models
+from regression.evaluation     import evaluate_all, print_report, save_report
 from config import get_current_run
 
 
-def _make_output_dir(feature_set: str) -> Path:
-    run_dir = get_current_run()
-    out = run_dir / "regression" / feature_set
-    out.mkdir(parents=True, exist_ok=True)
-    return out
-
-
-# =========================================================
+# ============================================================
 # RUN — UN FEATURE SET
-# =========================================================
+# ============================================================
 
 def run_regression(
     feature_set:      str  = "all",
     refresh:          bool = False,
     min_participants: int  = 1,
     normalize:        bool = True,
+    exclude_single:   bool = True,
     save:             bool = True,
     seed:             int  = 42,
     check_db:         bool = True,
     out_dir:          Path | None = None,
 ) -> dict:
-    """
-    Lance le pipeline de régression pour un feature set.
+    _header(f"Régression groove  |  features={feature_set}  |  exclude_single={exclude_single}")
 
-    Args:
-        feature_set:      "design" | "acoustic" | "all"
-        refresh:          re-fetch Supabase même si cache local existe
-        min_participants: filtre les stimuli sous-représentés
-        normalize:        centre-réduit les features (recommandé pour Ridge)
-        save:             sauve les résultats + figures sur disque
-        seed:             graine pour reproductibilité
-        check_db:         diagnostic Supabase avant la régression
-        out_dir:          dossier de sortie (auto si None)
-
-    Returns:
-        dict {
-            feature_set, features, n_stimuli,
-            models: {nom: {r2_cv_mean, mae_cv_mean, coefs | importances}},
-            best_model, best_r2,
-            out_dir,
-        }
-    """
-    _header(f"Régression groove  |  features={feature_set}")
-
-    # ── 0. Diagnostic Supabase ────────────────────────────
     if check_db:
-        print("\n🔍  Vérification Supabase…")
-        try:
-            from perception.check_supabase import check_supabase
-            ok = check_supabase(refresh=False, verbose=True)
-            if not ok:
-                print("⚠️  Supabase check failed — tentative sur cache local")
-                if refresh:
-                    raise RuntimeError(
-                        "--refresh demandé mais Supabase inaccessible. "
-                        "Vérifie SUPABASE_URL / SUPABASE_KEY."
-                    )
-        except ImportError:
-            print("⚠️  perception.check_supabase introuvable — diagnostic ignoré")
+        _run_db_check(refresh)
 
-    # ── 1. Données agrégées (Ridge + RF) ──────────────────
-    df, X, y, features = load_regression_data(
+    # ── 1. Données agrégées ───────────────────────────────────────────────────
+    df, X, y, features = load_aggregated(
         feature_set=feature_set,
         refresh=refresh,
         min_participants=min_participants,
         normalize=normalize,
+        exclude_single=exclude_single,
     )
     describe_dataset(df, features)
 
     if len(df) < 10:
-        print(
-            f"\n⚠️  Seulement {len(df)} stimuli après jointure.\n"
-            "   Les résultats seront peu fiables.\n"
-            "   → Collecte plus de réponses puis relance avec --refresh."
-        )
+        print(f"\n⚠️  Seulement {len(df)} stimuli après jointure.")
 
-    # ── 2. Données brutes pour le LMM ─────────────────────
-    # load_raw_responses() était implémenté mais jamais appelé — corrigé.
-    # df_raw contient les réponses individuelles + musical_background si dispo.
-    df_raw = load_raw_responses(feature_set=feature_set, refresh=False)
-    if df_raw is not None:
-        print(f"  [LMM] {len(df_raw)} réponses brutes chargées pour le modèle mixte")
+    # ── 2. Données brutes (LMM) ───────────────────────────────────────────────
+    df_raw = load_raw_responses(
+        feature_set=feature_set,
+        refresh=False,
+        exclude_single=exclude_single,
+    )
+
+    # Features pour le LMM : base + noms des termes d'interaction
+    if df_raw is not None and "features_requested" in df_raw.attrs:
+        features_for_lmm = df_raw.attrs["features_requested"]
     else:
-        print("  [LMM] données brutes indisponibles — LMM ignoré pour ce run")
+        features_for_lmm = features
 
-    # ── 3. Entraînement ──────────────────────────────────
-    models = fit_models(X, y, features=features, seed=seed, df_raw=df_raw)
+    # ── 3. Comparaison AIC/BIC si feature_set='interactions' ─────────────────
+    aic_bic_comparison = {}
+    if feature_set == "interactions" and df_raw is not None:
+        aic_bic_comparison = _run_aic_bic_comparison(df_raw, features_for_lmm)
 
-    # ── 4. Évaluation ────────────────────────────────────
-    results = evaluate_models(models, X, y, features=features)
+    # ── 4. Fit des modèles ────────────────────────────────────────────────────
+    models = build_models(seed=seed)
+    for model in models:
+        f = features_for_lmm if model.supports_raw_data else features
+        model.fit(X, y, features=f, df_raw=df_raw)
+
+    # ── 5. Évaluation ─────────────────────────────────────────────────────────
+    results = evaluate_all(models, X, y)
     print_report(results, feature_set=feature_set)
 
-    # ── 5. Sauvegarde ────────────────────────────────────
+    # ── 6. Sauvegarde ─────────────────────────────────────────────────────────
     if out_dir is None:
         out_dir = _make_output_dir(feature_set)
 
     if save:
-        save_report(results, df=df, features=features, out_dir=out_dir)
+        save_report(
+            results, df=df, features=features,
+            out_dir=out_dir, df_raw=df_raw,
+            extra={"aic_bic_comparison": aic_bic_comparison},
+        )
         print(f"\n  💾  Résultats → {out_dir}")
 
-    # ── 6. Résumé ─────────────────────────────────────────
-    best = max(results, key=lambda k: results[k].get("r2_cv_mean", -np.inf))
+    best = _best_model(results)
 
     return {
-        "feature_set": feature_set,
-        "features":    features,
-        "n_stimuli":   int(len(df)),
-        "models":      results,
-        "best_model":  best,
-        "best_r2":     results[best].get("r2_cv_mean"),
-        "out_dir":     out_dir,
+        "feature_set":          feature_set,
+        "features":             features,
+        "n_stimuli":            int(len(df)),
+        "exclude_single":       exclude_single,
+        "models":               results,
+        "best_model":           best,
+        "best_r2":              results[best].get("r2_cv_mean") if best else None,
+        "out_dir":              out_dir,
+        "aic_bic_comparison":   aic_bic_comparison,
     }
 
 
-# =========================================================
-# RUN — TOUS LES FEATURE SETS (mode mémoire)
-# =========================================================
+# ============================================================
+# RUN — TOUS LES FEATURE SETS
+# ============================================================
 
 def run_regression_all(
     refresh:          bool = False,
     min_participants: int  = 1,
     normalize:        bool = True,
+    exclude_single:   bool = True,
     save:             bool = True,
     seed:             int  = 42,
     check_db:         bool = True,
 ) -> dict:
-    """
-    Lance la régression sur les 3 feature sets et produit la figure comparative.
-
-    Séquence :
-        1. design   — paramètres manipulés (S_mv, D_mv, E_mv, P_mv)
-        2. acoustic — métriques réalisées  (D, I, V, S, E, P)
-        3. all      — union des deux
-    """
     _header("Régression groove  |  3 feature sets — mode mémoire")
 
-    run_root  = _make_run_root()
-    all_results: dict[str, dict] = {}
+    run_root    = _make_run_root()
+    all_results = {}
     check_done  = False
 
     for fs in ("design", "acoustic", "all"):
         result = run_regression(
             feature_set=fs,
-            # Re-fetch Supabase une seule fois (premier feature set seulement)
             refresh=(refresh and not check_done),
             min_participants=min_participants,
             normalize=normalize,
+            exclude_single=exclude_single,
             save=save,
             seed=seed,
-            # Diagnostic DB : si le premier check a réussi, on ne re-vérifie pas
-            # Mais si le premier a échoué, on n'essaie pas non plus les suivants
             check_db=(check_db and not check_done),
             out_dir=run_root / fs if save else None,
         )
         all_results[fs] = result
         check_done = True
 
-    # ── Figure comparative ────────────────────────────────
-    fig_path = None
-    if save:
-        try:
-            from regression.figures import plot_comparison_bar
-
-            plot_data: dict[str, dict] = {}
-            for fs, res in all_results.items():
-                plot_data[fs] = res["models"]
-
-            fig_path = run_root / "comparison_bar.png"
-            plot_comparison_bar(all_results=plot_data, out_path=fig_path)
-            print(f"\n  📊  Figure comparative → {fig_path}")
-
-        except Exception as exc:
-            print(f"  ⚠️  Figure comparative échouée : {exc}")
-
     _print_comparison_summary(all_results)
+    return {**all_results, "run_root": run_root}
 
-    return {**all_results, "comparison_figure": fig_path, "run_root": run_root}
+
+# ============================================================
+# AIC/BIC COMPARISON
+# ============================================================
+
+def _run_aic_bic_comparison(
+    df_raw:           pd.DataFrame,
+    features_with_interactions: list[str],
+) -> dict:
+    """
+    Compare M0 (additif) vs M1 (avec interactions) via AIC/BIC en ML.
+
+    M0 : features de base sans termes croisés
+    M1 : M0 + D_sq, DxP, SxE, DxS
+    """
+    from regression.models.lmm_comparison import compare_lmm_models
+    from regression.data.features import INTERACTION_TERMS
+
+    features_base = [
+        f for f in features_with_interactions
+        if f not in INTERACTION_TERMS
+    ]
+
+    print("\n" + "═" * 65)
+    print("  Comparaison formelle M0 vs M1 — AIC/BIC (ML)")
+    print("═" * 65)
+
+    return compare_lmm_models(
+        df_raw=df_raw,
+        features_base=features_base,
+        features_interaction=features_with_interactions,
+        verbose=True,
+    )
 
 
-# =========================================================
-# HELPERS
-# =========================================================
+# ============================================================
+# HELPERS PRIVÉS
+# ============================================================
 
-def _make_run_root() -> Path:
-    run_dir = get_current_run()
-    out = run_dir / "regression"
+def _run_db_check(refresh: bool) -> None:
+    print("\n🔍  Vérification Supabase…")
+    try:
+        from perception.check_supabase import check_supabase
+        ok = check_supabase(refresh=False, verbose=True)
+        if not ok:
+            print("⚠️  Supabase check failed — tentative sur cache local")
+            if refresh:
+                raise RuntimeError("--refresh demandé mais Supabase inaccessible.")
+    except ImportError:
+        print("⚠️  perception.check_supabase introuvable — diagnostic ignoré")
+
+
+def _make_output_dir(feature_set: str) -> Path:
+    out = get_current_run() / "regression" / feature_set
     out.mkdir(parents=True, exist_ok=True)
     return out
 
 
+def _make_run_root() -> Path:
+    out = get_current_run() / "regression"
+    out.mkdir(parents=True, exist_ok=True)
+    return out
+
+
+def _best_model(results: dict) -> str | None:
+    preferred = {"Ridge", "ElasticNet", "SVR"}
+    candidates = {
+        k: v for k, v in results.items()
+        if k in preferred
+        and not v.get("_is_lmm")
+        and not v.get("_not_fitted")
+    }
+    if not candidates:
+        candidates = {
+            k: v for k, v in results.items()
+            if not v.get("_is_lmm") and not v.get("_not_fitted")
+        }
+    if not candidates:
+        return None
+    return max(candidates, key=lambda k: candidates[k].get("r2_cv_mean", -np.inf))
+
+
 def _header(msg: str) -> None:
-    w = 55
+    w = 65
     print(f"\n{'═'*w}\n  {msg}\n{'═'*w}")
 
 
 def _print_comparison_summary(all_results: dict) -> None:
-    w = 65
+    w = 70
     print(f"\n{'─'*w}")
-    print(f"  {'Feature set':<14} {'Model':<16} {'R² CV':<12} {'MAE CV':<10}")
+    print(f"  {'Feature set':<14} {'Model':<16} {'R² CV':<14} {'MAE CV':<10}")
     print(f"{'─'*w}")
 
     for fs in ("design", "acoustic", "all"):
         if fs not in all_results:
             continue
-        models_res = all_results[fs].get("models", {})
-        for model_name, res in models_res.items():
-            r2  = res.get("r2_cv_mean", np.nan)
-            mae = res.get("mae_cv_mean", np.nan)
-            r2s = res.get("r2_cv_std",  0)
+        for model_name, res in all_results[fs].get("models", {}).items():
+            r2  = res.get("r2_cv_mean", float("nan"))
+            mae = res.get("mae_cv_mean", float("nan"))
+            r2s = res.get("r2_cv_std", 0)
             tag = "  ★" if model_name == all_results[fs].get("best_model") else ""
-            print(
-                f"  {fs:<14} {model_name:<16} "
-                f"{r2:.3f} ±{r2s:.2f}   {mae:.3f}{tag}"
-            )
+            if res.get("_is_lmm"):
+                r2  = res.get("r2_marginal", float("nan"))
+                r2s = 0
+                tag += "  [in-sample]"
+            print(f"  {fs:<14} {model_name:<16} {r2:.3f} ±{r2s:.2f}   {mae:.3f}{tag}")
 
     best_fs, best_model, best_r2 = _find_global_best(all_results)
     print(f"{'─'*w}")
-    print(f"  🏆  Meilleur : {best_fs} / {best_model}  →  R² CV = {best_r2:.3f}")
+    print(f"  🏆  Meilleur (CV) : {best_fs} / {best_model}  →  R² CV = {best_r2:.3f}")
     print(f"{'─'*w}\n")
 
 
 def _find_global_best(all_results: dict) -> tuple[str, str, float]:
+    preferred = {"Ridge", "ElasticNet", "SVR"}
     best = ("—", "—", -np.inf)
     for fs, res in all_results.items():
         if not isinstance(res, dict):
             continue
         for model_name, mres in res.get("models", {}).items():
+            if model_name not in preferred:
+                continue
             r2 = mres.get("r2_cv_mean", -np.inf)
-            if r2 > best[2]:
+            if isinstance(r2, float) and r2 > best[2]:
                 best = (fs, model_name, r2)
     return best

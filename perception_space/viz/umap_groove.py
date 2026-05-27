@@ -13,6 +13,12 @@ Figure en 2 ou 3 panneaux selon les données disponibles :
     A — UMAP coloré par groove_mean + contours de clusters
     B — UMAP coloré par complexité_mean (si disponible)
     C — UMAP coloré par profil musical  (si background disponible)
+
+Corrections v3 :
+    #1 — Suppression du doublon d'annotations dans _scatter_panel
+         (second bloc `for idx in [top_idx, bot_idx]` supprimé)
+    #8 — RC params locaux (_RC) remplacés par apply_thesis_style()
+         pour cohérence avec le reste du module viz
 """
 
 from __future__ import annotations
@@ -24,36 +30,20 @@ import matplotlib.patheffects as pe
 from pathlib import Path
 from scipy.spatial import ConvexHull
 
-_RC = {
-    "font.family":        "sans-serif",
-    "font.sans-serif":    ["Helvetica Neue", "Helvetica", "Arial", "DejaVu Sans"],
-    "font.size":          9,
-    "axes.labelsize":     9,
-    "axes.titlesize":     10,
-    "axes.titleweight":   "semibold",
-    "axes.titlelocation": "left",
-    "axes.spines.top":    False,
-    "axes.spines.right":  False,
-    "axes.linewidth":     0.6,
-    "xtick.labelsize":    8,
-    "ytick.labelsize":    8,
-    "figure.dpi":         150,
-    "savefig.dpi":        300,
-    "savefig.bbox":       "tight",
-    "savefig.facecolor":  "white",
-}
+# Fix #8 — style centralisé, plus de _RC local
+from .style import apply_thesis_style
 
 CLUSTER_COLORS = [
     "#2563EB", "#16A34A", "#D97706", "#DC2626",
     "#7C3AED", "#0891B2", "#DB2777", "#65A30D",
 ]
 
-# Couleurs par profil musical — suffisamment distinctes, accessibles aux daltoniens
+# Couleurs par profil musical — accessibles aux daltoniens
 BACKGROUND_COLORS = {
-    "non_musician": "#9CA3AF",   # gris neutre
-    "amateur":      "#60A5FA",   # bleu clair
-    "semi_pro":     "#34D399",   # vert menthe
-    "pro":          "#F59E0B",   # ambre
+    "non_musician": "#9CA3AF",
+    "amateur":      "#60A5FA",
+    "semi_pro":     "#34D399",
+    "pro":          "#F59E0B",
 }
 
 BACKGROUND_LABELS = {
@@ -63,7 +53,6 @@ BACKGROUND_LABELS = {
     "pro":          "Professionnel·le",
 }
 
-# Ordre d'affichage dans la légende
 BACKGROUND_ORDER = ["non_musician", "amateur", "semi_pro", "pro"]
 
 
@@ -79,15 +68,15 @@ def plot_umap_groove(
     """
     Args:
         embedding   : embeddings réalisés (n, d) — réduit à 2D si nécessaire
-        groove      : ratings groove alignés (n,)
-        complexity  : ratings complexité alignés (n,) — optionnel
-        clusters    : labels de cluster (n,) — optionnel, pour les contours
+        groove      : ratings groove agrégés par stimulus (n,)
+        complexity  : ratings complexité agrégés (n,) — optionnel
+        clusters    : labels de cluster (n,) — optionnel
         umap_2d     : projection 2D du run d'analyse (n, 2) — optionnel
-        background  : profil musical par stimulus (n,) dtype=object — optionnel
-                      Valeurs attendues : "non_musician" | "amateur" | "semi_pro" | "pro" | None
+        background  : profil musical par stimulus (n,) — optionnel
         out_path    : chemin PNG
     """
-    plt.rcParams.update(_RC)
+    # Fix #8 — style centralisé
+    apply_thesis_style()
 
     # ── Projection 2D ────────────────────────────────────
     if umap_2d is not None and umap_2d.shape[0] == len(embedding):
@@ -99,14 +88,12 @@ def plot_umap_groove(
 
     groove = np.asarray(groove)
 
-    # Determine valid backgrounds
     has_background = (
         background is not None
         and len(background) == len(embedding)
         and any(b in BACKGROUND_ORDER for b in background if b is not None)
     )
 
-    # Nombre de panneaux
     n_panels = 1
     if complexity is not None:
         n_panels += 1
@@ -161,7 +148,6 @@ def plot_umap_groove(
             proj_label=proj_label,
             label=f"{panel_letter}  Profil musical dans l'espace latent",
         )
-        panel_idx += 1
 
     fig.suptitle(
         "Ratings perceptifs superposés à l'espace latent",
@@ -177,7 +163,7 @@ def plot_umap_groove(
 
 
 # =========================================================
-# PANNEAU GROOVE / COMPLEXITÉ (inchangé)
+# PANNEAU GROOVE / COMPLEXITÉ
 # =========================================================
 
 def _scatter_panel(
@@ -217,15 +203,35 @@ def _scatter_panel(
         zorder=4,
     )
 
+    # Fix #1 — une seule boucle d'annotation, le doublon est supprimé
     top_idx = int(np.argmax(values))
     bot_idx = int(np.argmin(values))
-    for idx in [top_idx, bot_idx]:
+
+    annotations = [
+        (top_idx, "Groove élevé"),
+        (bot_idx, "Groove faible"),
+    ]
+
+    for idx, txt in annotations:
         ax.annotate(
-            f"{values[idx]:.1f}",
+            f"{txt}\n({values[idx]:.1f})",
             xy=(emb[idx, 0], emb[idx, 1]),
-            xytext=(8, 8), textcoords="offset points",
-            fontsize=7.5, color="#111827",
-            arrowprops=dict(arrowstyle="-", color="#888888", lw=0.7),
+            xytext=(10, 10),
+            textcoords="offset points",
+            fontsize=7.5,
+            color="#111827",
+            bbox=dict(
+                boxstyle="round,pad=0.25",
+                fc="white",
+                ec="#D1D5DB",
+                alpha=0.95,
+            ),
+            arrowprops=dict(
+                arrowstyle="-",
+                color="#9CA3AF",
+                lw=0.8,
+            ),
+            zorder=10,
         )
 
     cbar = plt.colorbar(sc, ax=ax, fraction=0.046, pad=0.04, shrink=0.85)
@@ -242,6 +248,23 @@ def _scatter_panel(
     ax.text(0.99, 0.01, proj_label,
             transform=ax.transAxes, ha="right", va="bottom",
             fontsize=6.5, color="#9CA3AF", style="italic")
+    ax.text(
+        0.02, 0.98,
+        (
+            "Chaque point = un stimulus\n"
+            "Proximité = similarité perceptive\n"
+            "Couleur = rating moyen"
+        ),
+        transform=ax.transAxes,
+        ha="left", va="top",
+        fontsize=6.8, color="#6B7280",
+        bbox=dict(
+            boxstyle="round,pad=0.3",
+            facecolor="white",
+            edgecolor="#E5E7EB",
+            alpha=0.9,
+        ),
+    )
 
 
 # =========================================================
@@ -256,19 +279,8 @@ def _background_panel(
     proj_label: str,
     label:      str,
 ) -> None:
-    """
-    Scatter UMAP coloré par profil musical.
-
-    Pour chaque groupe :
-      - Scatter des points avec la couleur du profil
-      - Enveloppe convexe légère
-      - Centroïde annoté avec le groove moyen du groupe
-
-    Les points sans background renseigné sont tracés en gris neutre.
-    """
     legend_handles: list[mpatches.Patch] = []
 
-    # Points sans background — tracés en premier (fond)
     unknown_mask = np.array([b is None or b not in BACKGROUND_ORDER for b in background])
     if unknown_mask.any():
         ax.scatter(
@@ -277,7 +289,6 @@ def _background_panel(
             linewidths=0, zorder=2,
         )
 
-    # Un groupe par profil
     for lvl in BACKGROUND_ORDER:
         mask  = np.array([b == lvl for b in background])
         n_pts = int(mask.sum())
@@ -286,9 +297,8 @@ def _background_panel(
 
         color = BACKGROUND_COLORS[lvl]
         lbl   = BACKGROUND_LABELS[lvl]
+        pts   = emb[mask]
 
-        # ── Enveloppe convexe ─────────────────────────────
-        pts = emb[mask]
         if n_pts >= 3:
             try:
                 hull  = ConvexHull(pts)
@@ -301,7 +311,6 @@ def _background_panel(
             except Exception:
                 pass
 
-        # ── Scatter ───────────────────────────────────────
         ax.scatter(
             pts[:, 0], pts[:, 1],
             s=50, color=color, alpha=0.80,
@@ -309,16 +318,13 @@ def _background_panel(
             zorder=4,
         )
 
-        # ── Centroïde annoté ──────────────────────────────
-        cx, cy       = pts.mean(axis=0)
-        groove_mean  = float(np.mean(groove[mask]))
+        cx, cy      = pts.mean(axis=0)
+        groove_mean = float(np.mean(groove[mask]))
 
         ax.scatter(cx, cy, marker="D", s=90, color=color,
                    edgecolors="white", linewidths=1.2, zorder=6)
-
         ax.text(
-            cx, cy,
-            f"{groove_mean:.1f}",
+            cx, cy, f"{groove_mean:.1f}",
             ha="center", va="center",
             fontsize=7.5, fontweight="bold",
             color="white", zorder=7,
@@ -328,7 +334,7 @@ def _background_panel(
         legend_handles.append(
             mpatches.Patch(
                 color=color,
-                label=f"{lbl}  (n={n_pts}, ḡ={groove_mean:.2f})",
+                label=f"{lbl}  (n={n_pts}, ḡ={groove_mean:.2f})",
                 alpha=0.85,
             )
         )
@@ -347,7 +353,6 @@ def _background_panel(
     ax.set_title(label, pad=7)
     ax.tick_params(labelbottom=False, labelleft=False)
     ax.grid(alpha=0.15, linestyle=":", linewidth=0.5)
-
     ax.text(0.99, 0.01, proj_label,
             transform=ax.transAxes, ha="right", va="bottom",
             fontsize=6.5, color="#9CA3AF", style="italic")

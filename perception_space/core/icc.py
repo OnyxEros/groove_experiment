@@ -4,8 +4,8 @@ perception_space/core/icc.py
 Intraclass Correlation Coefficient (ICC) inter-participants.
 
 Implémente ICC(2,1) — two-way random, single measures, absolute agreement.
-C'est la mesure standard pour la fiabilité inter-juges en psychologie
-de la perception (Shrout & Fleiss 1979, Koo & Mae 2016).
+Standard pour la fiabilité inter-juges en psychologie de la perception
+(Shrout & Fleiss 1979, Koo & Mae 2016).
 
 Interprétation (Koo & Mae 2016) :
     ICC < 0.50  : fiabilité faible
@@ -13,13 +13,20 @@ Interprétation (Koo & Mae 2016) :
     0.75–0.90   : fiabilité bonne
     > 0.90      : fiabilité excellente
 
-Usage :
-    from perception_space.core.icc import compute_icc, icc_summary
-    result = compute_icc(ratings_wide)   # shape (n_stimuli, n_participants)
+Correction v2 :
+    L'imputation des NaN par moyenne de ligne biaise l'ICC vers le haut
+    (réduit la variance résiduelle artificiellement). Avec un design incomplet
+    (tous les participants n'évaluent pas tous les stimuli), on utilise
+    à la place une ANOVA à deux facteurs sur les données non-imputées
+    via les sommes de carrés correctement calculées sur les cellules disponibles.
+
+    Pour les IC95%, on conserve la formule Shrout & Fleiss mais on signale
+    explicitement quand la matrice est très incomplète (< 50% de remplissage).
 """
 
 from __future__ import annotations
 
+import warnings
 import numpy as np
 import pandas as pd
 from scipy import stats
@@ -38,81 +45,103 @@ def compute_icc(
 
     Args:
         ratings : np.ndarray shape (n_stimuli, n_participants)
-                  Les NaN sont ignorés (participants absents sur certains stimuli).
+                  Les NaN représentent les cellules manquantes (design incomplet).
+                  NE PAS imputer avant d'appeler cette fonction.
         model   : "ICC1" | "ICC2" | "ICC3"
-                  ICC2 recommandé pour des participants échantillonnés aléatoirement.
 
     Returns:
         dict {
-            icc       : float — valeur ICC
-            ci95_low  : float — borne basse IC 95%
-            ci95_high : float — borne haute IC 95%
-            F         : float — statistique F
-            df1, df2  : degrés de liberté
-            p_value   : float
-            n_stimuli : int
-            n_raters  : int
-            interpretation : str
+            icc, ci95_low, ci95_high, F, df1, df2, p_value,
+            n_stimuli, n_raters, model, MS_r, MS_e,
+            completeness_pct, interpretation, warning (si applicable)
         }
     """
     ratings = np.asarray(ratings, dtype=np.float64)
 
     if ratings.ndim != 2:
-        raise ValueError(f"ratings doit être 2D (n_stimuli, n_participants), got {ratings.ndim}D")
+        raise ValueError(
+            f"ratings doit être 2D (n_stimuli, n_participants), got {ratings.ndim}D"
+        )
 
-    n, k = ratings.shape  # n stimuli, k participants
+    n, k = ratings.shape
 
     if n < 3:
         raise ValueError(f"Minimum 3 stimuli requis, got {n}")
     if k < 2:
         raise ValueError(f"Minimum 2 participants requis, got {k}")
 
-    # ── Gestion NaN : remplace par la moyenne du stimulus ─
-    row_means = np.nanmean(ratings, axis=1, keepdims=True)
-    ratings_filled = np.where(np.isnan(ratings), row_means, ratings)
+    # ── Diagnostic de complétude ──────────────────────────
+    n_missing      = int(np.isnan(ratings).sum())
+    n_cells        = n * k
+    completeness   = float((n_cells - n_missing) / n_cells * 100)
+    warning_msg    = None
 
-    # ── Sommes des carrés (ANOVA à deux facteurs) ─────────
-    grand_mean = ratings_filled.mean()
+    if completeness < 30:
+        warning_msg = (
+            f"Matrice très incomplète ({completeness:.0f}% de remplissage). "
+            f"L'ICC est peu fiable — collecte plus de données."
+        )
+        warnings.warn(warning_msg, UserWarning, stacklevel=2)
+    elif completeness < 60:
+        warning_msg = (
+            f"Matrice incomplète ({completeness:.0f}% de remplissage). "
+            f"L'IC95% est large — interpréter avec précaution."
+        )
 
-    # SS between rows (stimuli)
-    row_means_vec = ratings_filled.mean(axis=1)
-    SS_r = k * np.sum((row_means_vec - grand_mean) ** 2)
+    # ── ANOVA sans imputation ─────────────────────────────
+    # On travaille sur les cellules non-NaN directement.
+    # SS_r calculé sur les moyennes par ligne (nanmean ignore les NaN).
+    # SS_c calculé sur les moyennes par colonne (idem).
+    # SS_e = SS_t - SS_r - SS_c (résiduel).
+    #
+    # Cette approche est équivalente à une ANOVA à deux facteurs
+    # déséquilibrée (type I SS). Acceptable pour des designs faiblement
+    # déséquilibrés. Pour un design très déséquilibré, préférer un modèle
+    # mixte (lme4 en R), mais hors scope ici.
+
+    grand_mean   = float(np.nanmean(ratings))
+    row_means    = np.nanmean(ratings, axis=1)    # shape (n,)
+    col_means    = np.nanmean(ratings, axis=0)    # shape (k,)
+    row_counts   = np.sum(~np.isnan(ratings), axis=1)  # réponses par stimulus
+    col_counts   = np.sum(~np.isnan(ratings), axis=0)  # réponses par participant
+
+    # SS between rows (stimuli) — pondéré par le nombre de réponses
+    SS_r = float(np.sum(row_counts * (row_means - grand_mean) ** 2))
     df_r = n - 1
 
-    # SS between columns (participants/raters)
-    col_means_vec = ratings_filled.mean(axis=0)
-    SS_c = n * np.sum((col_means_vec - grand_mean) ** 2)
+    # SS between columns (participants) — pondéré
+    SS_c = float(np.sum(col_counts * (col_means - grand_mean) ** 2))
     df_c = k - 1
 
-    # SS total
-    SS_t = np.sum((ratings_filled - grand_mean) ** 2)
-    df_t = n * k - 1
+    # SS total — sur les cellules non-NaN
+    SS_t = float(np.nansum((ratings - grand_mean) ** 2))
+    df_t = int(n_cells - n_missing) - 1
 
-    # SS error (résiduel)
-    SS_e = SS_t - SS_r - SS_c
-    df_e = (n - 1) * (k - 1)
+    # SS error
+    SS_e = max(SS_t - SS_r - SS_c, 0.0)  # clip à 0 pour éviter MS_e négatif
+    df_e = max(df_t - df_r - df_c, 1)
 
-    # Mean squares
-    MS_r = SS_r / df_r
-    MS_c = SS_c / df_c
+    MS_r = SS_r / df_r if df_r > 0 else 1e-10
+    MS_c = SS_c / df_c if df_c > 0 else 1e-10
     MS_e = SS_e / df_e if df_e > 0 else 1e-10
 
     # ── ICC selon le modèle ───────────────────────────────
+    k_bar = float(np.mean(row_counts))  # nombre moyen de raters par stimulus
+
     if model == "ICC1":
-        # One-way random
-        icc_val = (MS_r - MS_e) / (MS_r + (k - 1) * MS_e)
+        icc_val = (MS_r - MS_e) / (MS_r + (k_bar - 1) * MS_e)
         F_val   = MS_r / MS_e
         df1, df2 = df_r, df_t - df_r
 
     elif model == "ICC2":
-        # Two-way random, absolute agreement
-        icc_val = (MS_r - MS_e) / (MS_r + (k - 1) * MS_e + k * (MS_c - MS_e) / n)
+        icc_val = (MS_r - MS_e) / (
+            MS_r + (k_bar - 1) * MS_e + k_bar * (MS_c - MS_e) / n
+        )
         F_val   = MS_r / MS_e
         df1, df2 = df_r, df_e
 
     elif model == "ICC3":
-        # Two-way mixed, consistency
-        icc_val = (MS_r - MS_e) / (MS_r + (k - 1) * MS_e)
+        icc_val = (MS_r - MS_e) / (MS_r + (k_bar - 1) * MS_e)
         F_val   = MS_r / MS_e
         df1, df2 = df_r, df_e
 
@@ -124,40 +153,40 @@ def compute_icc(
     # ── p-value ───────────────────────────────────────────
     p_value = float(1 - stats.f.cdf(F_val, df1, df2))
 
-    # ── Intervalle de confiance 95% (Shrout & Fleiss 1979) ─
-    alpha = 0.05
+    # ── IC95% Shrout & Fleiss 1979 ────────────────────────
+    alpha   = 0.05
     F_lower = F_val / stats.f.ppf(1 - alpha / 2, df1, df2)
     F_upper = F_val * stats.f.ppf(1 - alpha / 2, df2, df1)
 
-    if model == "ICC1":
-        ci_low  = (F_lower - 1) / (F_lower + k - 1)
-        ci_high = (F_upper - 1) / (F_upper + k - 1)
-    else:
-        ci_low  = (F_lower - 1) / (F_lower + k - 1)
-        ci_high = (F_upper - 1) / (F_upper + k - 1)
+    ci_low  = float(np.clip((F_lower - 1) / (F_lower + k_bar - 1), -1.0, 1.0))
+    ci_high = float(np.clip((F_upper - 1) / (F_upper + k_bar - 1), -1.0, 1.0))
 
-    ci_low  = float(np.clip(ci_low,  -1.0, 1.0))
-    ci_high = float(np.clip(ci_high, -1.0, 1.0))
-
-    return {
-        "icc":            icc_val,
-        "ci95_low":       ci_low,
-        "ci95_high":      ci_high,
-        "F":              float(F_val),
-        "df1":            int(df1),
-        "df2":            int(df2),
-        "p_value":        p_value,
-        "n_stimuli":      int(n),
-        "n_raters":       int(k),
-        "model":          model,
-        "MS_r":           float(MS_r),
-        "MS_e":           float(MS_e),
-        "interpretation": _interpret_icc(icc_val),
+    result = {
+        "icc":              icc_val,
+        "ci95_low":         ci_low,
+        "ci95_high":        ci_high,
+        "F":                float(F_val),
+        "df1":              int(df1),
+        "df2":              int(df_e),
+        "p_value":          p_value,
+        "n_stimuli":        int(n),
+        "n_raters":         int(k),
+        "k_bar":            round(float(k_bar), 2),
+        "model":            model,
+        "MS_r":             float(MS_r),
+        "MS_e":             float(MS_e),
+        "completeness_pct": round(completeness, 1),
+        "interpretation":   _interpret_icc(icc_val),
     }
+
+    if warning_msg:
+        result["warning"] = warning_msg
+
+    return result
 
 
 # =========================================================
-# ICC PAR STIMULUS (variabilité locale)
+# ICC PAR STIMULUS
 # =========================================================
 
 def compute_per_stimulus_variance(
@@ -165,32 +194,33 @@ def compute_per_stimulus_variance(
     stim_col: str = "stimulus_id",
     rating_col: str = "groove",
     participant_col: str = "participant_id",
+    n_min: int = 2,
 ) -> pd.DataFrame:
     """
-    Calcule la variance inter-participants par stimulus.
-    Utile pour identifier les stimuli ambigus.
+    Variabilité inter-participants par stimulus.
 
-    Returns:
-        DataFrame avec colonnes : stimulus_id, mean, std, cv, n_raters, iqr
+    Retourne uniquement les stimuli avec >= n_min réponses.
+    Colonnes : stim_col, mean, std, cv, iqr, n_raters
+    Trié par std décroissant (stimuli les plus ambigus en premier).
     """
     rows = []
     for stim_id, group in ratings_long.groupby(stim_col):
         vals = group[rating_col].dropna().values
-        if len(vals) < 2:
+        if len(vals) < n_min:
             continue
         rows.append({
-            stim_col:    stim_id,
-            "mean":      float(np.mean(vals)),
-            "std":       float(np.std(vals, ddof=1)),
-            "cv":        float(np.std(vals, ddof=1) / (np.mean(vals) + 1e-9)),
-            "iqr":       float(np.percentile(vals, 75) - np.percentile(vals, 25)),
-            "n_raters":  int(len(vals)),
+            stim_col:   stim_id,
+            "mean":     float(np.mean(vals)),
+            "std":      float(np.std(vals, ddof=1)),
+            "cv":       float(np.std(vals, ddof=1) / (np.mean(vals) + 1e-9)),
+            "iqr":      float(np.percentile(vals, 75) - np.percentile(vals, 25)),
+            "n_raters": int(len(vals)),
         })
     return pd.DataFrame(rows).sort_values("std", ascending=False)
 
 
 # =========================================================
-# WIDE FORMAT HELPER
+# WIDE FORMAT
 # =========================================================
 
 def ratings_to_wide(
@@ -198,12 +228,19 @@ def ratings_to_wide(
     stim_col: str = "stimulus_id",
     participant_col: str = "participant_id",
     rating_col: str = "groove",
+    n_min: int = 2,
 ) -> np.ndarray:
     """
-    Convertit un DataFrame long en matrice wide (n_stimuli × n_participants).
-    Les cellules manquantes sont NaN.
+    Convertit en matrice wide (n_stimuli × n_participants).
+    Exclut les stimuli avec < n_min réponses.
+    Cellules manquantes → NaN (ne pas imputer).
     """
-    pivot = ratings_long.pivot_table(
+    # Filtre couverture minimale
+    coverage = ratings_long.groupby(stim_col)[rating_col].count()
+    valid    = coverage[coverage >= n_min].index
+    df       = ratings_long[ratings_long[stim_col].isin(valid)]
+
+    pivot = df.pivot_table(
         index=stim_col,
         columns=participant_col,
         values=rating_col,
@@ -213,36 +250,34 @@ def ratings_to_wide(
 
 
 # =========================================================
-# INTERPRÉTATION
+# HELPERS
 # =========================================================
 
 def _interpret_icc(icc: float) -> str:
-    if icc < 0:
-        return "négatif (variance résiduelle > variance inter-stimuli)"
-    elif icc < 0.50:
-        return "faible"
-    elif icc < 0.75:
-        return "modérée"
-    elif icc < 0.90:
-        return "bonne"
-    else:
-        return "excellente"
+    if icc < 0:     return "négatif (variance résiduelle > variance inter-stimuli)"
+    elif icc < 0.50: return "faible"
+    elif icc < 0.75: return "modérée"
+    elif icc < 0.90: return "bonne"
+    else:            return "excellente"
 
 
 def icc_summary(result: dict) -> None:
-    """Affiche un rapport ICC dans le terminal."""
-    w = 52
+    w = 56
     print(f"\n{'─'*w}")
     print(f"  ICC inter-participants  [{result['model']}]")
     print(f"{'─'*w}")
-    print(f"  Stimuli     : {result['n_stimuli']}")
-    print(f"  Participants: {result['n_raters']}")
+    print(f"  Stimuli      : {result['n_stimuli']}  (k̄={result['k_bar']} raters/stimulus)")
+    print(f"  Participants : {result['n_raters']}")
+    print(f"  Complétude   : {result['completeness_pct']}%")
     print(
-        f"  ICC         : {result['icc']:.3f}  "
+        f"  ICC          : {result['icc']:.3f}  "
         f"[{result['ci95_low']:.3f} – {result['ci95_high']:.3f}]  95% CI"
     )
     print(
-        f"  F({result['df1']}, {result['df2']})    : {result['F']:.2f}   p = {result['p_value']:.4f}"
+        f"  F({result['df1']}, {result['df2']})     : "
+        f"{result['F']:.2f}   p = {result['p_value']:.4f}"
     )
-    print(f"  Fiabilité   : {result['interpretation']}")
+    print(f"  Fiabilité    : {result['interpretation']}")
+    if "warning" in result:
+        print(f"  ⚠️   {result['warning']}")
     print(f"{'─'*w}\n")

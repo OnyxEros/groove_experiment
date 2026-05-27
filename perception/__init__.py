@@ -1,4 +1,5 @@
 from .loader import load_perceptual_dataset, load_ratings_df
+from .supabase_io import fetch_ratings
 from .alignment import fit_alignment, predict_perception, print_alignment_report
 from .metrics import (
     correlation_score,

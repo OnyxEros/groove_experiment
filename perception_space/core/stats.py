@@ -6,6 +6,15 @@ Tests statistiques pour l'analyse perceptive du groove.
 Notation :
     Paramètres génératifs (manipulés) : S_mv, D_mv, E_mv, P_mv
     Descripteurs émergents (réalisés)  : D, I, V, S, E, P
+
+Nouveautés v2 :
+    - kruskal_by_condition : test adaptatif ANOVA/Kruskal avec sélection
+      automatique selon la normalité des groupes (Shapiro-Wilk α=0.05)
+    - post_hoc_bonferroni : comparaisons pairées corrigées pour D_mv
+      (seul facteur significatif)
+    - permutation_test : inchangé (test de Mantel sur paires)
+    - compute_condition_stats : stats descriptives par cellule
+    - coverage_report : rapport de couverture des stimuli
 """
 
 from __future__ import annotations
@@ -19,7 +28,7 @@ from itertools import combinations
 
 
 # =========================================================
-# KRUSKAL / ANOVA — choix automatique
+# KRUSKAL / ANOVA — choix automatique + post-hoc
 # =========================================================
 
 def kruskal_by_condition(
@@ -31,13 +40,19 @@ def kruskal_by_condition(
     Test non-paramétrique (Kruskal-Wallis) ou paramétrique (ANOVA one-way)
     selon la normalité des groupes (Shapiro-Wilk, α=0.05).
 
-    condition_cols par défaut : paramètres génératifs S_mv, D_mv, E_mv, P_mv
-    (les conditions manipulées, pas les descripteurs émergents).
+    Pour chaque condition, calcule aussi les comparaisons post-hoc Bonferroni
+    si le test principal est significatif (p < 0.05).
+
+    condition_cols par défaut : paramètres génératifs S_mv, D_mv, E_mv, P_mv.
     """
     if condition_cols is None:
-        condition_cols = [c for c in ["S_mv", "D_mv", "E_mv", "P_mv"] if c in df.columns]
+        condition_cols = [
+            c for c in ["S_mv", "D_mv", "E_mv", "P_mv"]
+            if c in df.columns
+        ]
 
     rows = []
+
     for cond in condition_cols:
         if cond not in df.columns:
             continue
@@ -51,6 +66,7 @@ def kruskal_by_condition(
         if len(groups) < 2:
             continue
 
+        # ── Test de normalité Shapiro-Wilk ────────────────
         normality_ok = True
         for g in groups:
             if len(g) < 3:
@@ -62,6 +78,7 @@ def kruskal_by_condition(
                     normality_ok = False
                     break
 
+        # ── Test principal ────────────────────────────────
         try:
             if normality_ok:
                 stat, p = stats.f_oneway(*groups)
@@ -89,17 +106,77 @@ def kruskal_by_condition(
     return pd.DataFrame(rows).sort_values("eta2", ascending=False)
 
 
-def anova_by_condition(
+def post_hoc_bonferroni(
     df: pd.DataFrame,
     groove_col: str = "groove_mean",
-    condition_cols: list[str] | None = None,
+    condition_col: str = "D_mv",
+    alpha: float = 0.05,
 ) -> pd.DataFrame:
-    """Alias vers kruskal_by_condition (choix automatique ANOVA/Kruskal)."""
-    return kruskal_by_condition(df, groove_col=groove_col, condition_cols=condition_cols)
+    """
+    Comparaisons pairées Welch t-test avec correction Bonferroni.
+
+    À utiliser après kruskal_by_condition quand le test principal est
+    significatif. Par défaut sur D_mv (seul effet significatif).
+
+    Returns:
+        DataFrame avec colonnes :
+            level_a, level_b, mean_a, mean_b, mean_diff,
+            t, df_welch, p_raw, p_bonferroni, significant, cohen_d
+    """
+    if condition_col not in df.columns:
+        raise ValueError(f"Colonne '{condition_col}' absente du DataFrame")
+
+    levels = sorted(df[condition_col].unique())
+    groups = {
+        lv: df.loc[df[condition_col] == lv, groove_col].dropna().values
+        for lv in levels
+    }
+
+    pairs         = list(combinations(levels, 2))
+    n_comparisons = len(pairs)
+    rows          = []
+
+    for lv_a, lv_b in pairs:
+        g_a, g_b = groups[lv_a], groups[lv_b]
+        if len(g_a) < 2 or len(g_b) < 2:
+            continue
+
+        t, p    = stats.ttest_ind(g_a, g_b, equal_var=False)
+        p_bonf  = min(float(p) * n_comparisons, 1.0)
+
+        # Cohen's d (pooled std, Welch-safe)
+        pooled_std = np.sqrt(
+            (np.var(g_a, ddof=1) + np.var(g_b, ddof=1)) / 2
+        )
+        cohen_d = float((g_a.mean() - g_b.mean()) / pooled_std) \
+            if pooled_std > 1e-10 else 0.0
+
+        # Degrés de liberté Welch
+        s_a, s_b = np.var(g_a, ddof=1), np.var(g_b, ddof=1)
+        n_a, n_b = len(g_a), len(g_b)
+        num      = (s_a / n_a + s_b / n_b) ** 2
+        den      = (s_a / n_a) ** 2 / (n_a - 1) + (s_b / n_b) ** 2 / (n_b - 1)
+        df_welch = float(num / den) if den > 1e-12 else float(n_a + n_b - 2)
+
+        rows.append({
+            "level_a":      lv_a,
+            "level_b":      lv_b,
+            "mean_a":       float(g_a.mean()),
+            "mean_b":       float(g_b.mean()),
+            "mean_diff":    float(g_a.mean() - g_b.mean()),
+            "t":            float(t),
+            "df_welch":     round(df_welch, 1),
+            "p_raw":        float(p),
+            "p_bonferroni": p_bonf,
+            "significant":  p_bonf < alpha,
+            "cohen_d":      cohen_d,
+        })
+
+    return pd.DataFrame(rows)
 
 
 # =========================================================
-# TEST DE PERMUTATION
+# TEST DE PERMUTATION (Mantel)
 # =========================================================
 
 def permutation_test(
@@ -108,6 +185,15 @@ def permutation_test(
     n_permutations: int = 1000,
     seed: int = 42,
 ) -> dict:
+    """
+    Test de Mantel : corrélation entre distances dans l'espace latent
+    et différences de ratings.
+
+    Note méthodologique : l'unité d'observation est la PAIRE de stimuli
+    (n*(n-1)/2 paires), pas le stimulus. La puissance statistique est donc
+    plus élevée qu'un test sur n points. La significativité doit être
+    interprétée en conséquence.
+    """
     rng = np.random.default_rng(seed)
     y   = np.asarray(y, dtype=np.float64)
 
@@ -120,6 +206,7 @@ def permutation_test(
             "p_value":          1.0,
             "permutation_dist": [],
             "n_permutations":   n_permutations,
+            "n_pairs":          len(dist_X),
             "significant":      False,
             "warning":          "Variance nulle — test non calculable",
         }
@@ -140,12 +227,13 @@ def permutation_test(
         "p_value":          p_value,
         "permutation_dist": null_dist.tolist(),
         "n_permutations":   n_permutations,
+        "n_pairs":          int(len(dist_X)),
         "significant":      p_value < 0.05,
     }
 
 
 # =========================================================
-# STATS DESCRIPTIVES PAR CELLULE DU DESIGN
+# STATS DESCRIPTIVES PAR CONDITION
 # =========================================================
 
 def compute_condition_stats(
@@ -153,12 +241,12 @@ def compute_condition_stats(
     groove_col: str = "groove_mean",
     condition_cols: list[str] | None = None,
 ) -> pd.DataFrame:
-    """
-    Statistiques descriptives par cellule du design.
-    condition_cols par défaut : paramètres génératifs.
-    """
+    """Stats descriptives par cellule du design."""
     if condition_cols is None:
-        condition_cols = [c for c in ["S_mv", "D_mv", "E_mv", "P_mv"] if c in df.columns]
+        condition_cols = [
+            c for c in ["S_mv", "D_mv", "E_mv", "P_mv"]
+            if c in df.columns
+        ]
 
     if not condition_cols:
         raise ValueError("Aucune colonne de condition trouvée")
@@ -170,67 +258,64 @@ def compute_condition_stats(
             warnings.warn(
                 f"compute_condition_stats : groove_col introuvable, "
                 f"fallback sur '{groove_col}'",
-                UserWarning,
-                stacklevel=2,
+                UserWarning, stacklevel=2,
             )
         else:
-            raise ValueError(
-                f"Colonne '{groove_col}' absente. "
-                f"Colonnes disponibles : {list(df.columns)}"
-            )
+            raise ValueError(f"Colonne '{groove_col}' absente.")
 
     agg = (
         df.groupby(condition_cols)[groove_col]
         .agg(mean="mean", std="std", n="count")
         .reset_index()
     )
-
     agg["sem"]  = agg["std"] / np.sqrt(agg["n"])
     agg["ci95"] = 1.96 * agg["sem"]
-
     return agg
 
 
 # =========================================================
-# POST-HOC PAIRWISE (Bonferroni)
+# RAPPORT DE COUVERTURE
 # =========================================================
 
-def pairwise_comparisons(
-    df: pd.DataFrame,
-    groove_col: str = "groove_mean",
-    condition_col: str = "S_mv",
-    alpha: float = 0.05,
-) -> pd.DataFrame:
-    levels = sorted(df[condition_col].unique())
-    groups = {
-        lv: df.loc[df[condition_col] == lv, groove_col].dropna().values
-        for lv in levels
+def coverage_report(
+    df_long: pd.DataFrame,
+    stim_col: str = "stimulus_id",
+    participant_col: str = "participant_id",
+    rating_col: str = "groove",
+    n_min: int = 2,
+) -> dict:
+    """
+    Rapport de couverture des stimuli.
+
+    Retourne un dict avec :
+        n_total         — nombre total de stimuli
+        n_covered       — stimuli avec >= n_min réponses
+        n_excluded      — stimuli avec < n_min réponses
+        coverage_pct    — % de stimuli couverts
+        responses_per_stim — dict {stim_id: n_responses}
+        excluded_stims  — liste des stim_id exclus
+        n_participants  — nombre de participants uniques
+        n_min           — seuil utilisé
+    """
+    coverage = df_long.groupby(stim_col)[rating_col].count()
+    n_parts  = df_long[participant_col].nunique() \
+        if participant_col in df_long.columns else None
+
+    covered  = coverage[coverage >= n_min]
+    excluded = coverage[coverage < n_min]
+
+    return {
+        "n_total":            int(len(coverage)),
+        "n_covered":          int(len(covered)),
+        "n_excluded":         int(len(excluded)),
+        "coverage_pct":       float(len(covered) / len(coverage) * 100),
+        "responses_per_stim": coverage.to_dict(),
+        "excluded_stims":     excluded.index.tolist(),
+        "n_participants":     int(n_parts) if n_parts else None,
+        "n_min":              n_min,
+        "mean_responses":     float(coverage.mean()),
+        "median_responses":   float(coverage.median()),
     }
-
-    n_comparisons = len(list(combinations(levels, 2)))
-    rows = []
-
-    for lv_a, lv_b in combinations(levels, 2):
-        g_a, g_b = groups[lv_a], groups[lv_b]
-        if len(g_a) < 2 or len(g_b) < 2:
-            continue
-
-        t, p   = stats.ttest_ind(g_a, g_b, equal_var=False)
-        p_bonf = min(p * n_comparisons, 1.0)
-
-        rows.append({
-            "level_a":      lv_a,
-            "level_b":      lv_b,
-            "mean_a":       float(g_a.mean()),
-            "mean_b":       float(g_b.mean()),
-            "mean_diff":    float(g_a.mean() - g_b.mean()),
-            "t":            float(t),
-            "p_raw":        float(p),
-            "p_bonferroni": float(p_bonf),
-            "significant":  p_bonf < alpha,
-        })
-
-    return pd.DataFrame(rows)
 
 
 # =========================================================
@@ -241,10 +326,8 @@ def _eta_squared_groups(groups: list[np.ndarray]) -> float:
     all_vals   = np.concatenate(groups)
     grand_mean = all_vals.mean()
     ss_total   = np.sum((all_vals - grand_mean) ** 2)
-
     if ss_total < 1e-12:
         return 0.0
-
     ss_between = sum(
         len(g) * (g.mean() - grand_mean) ** 2
         for g in groups
