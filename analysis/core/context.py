@@ -14,6 +14,12 @@ class AnalysisContext:
         from analysis.io.run_manager import RunManager
         self.run_manager = RunManager(run_dir)
 
+
+        from analysis.core.diagnostics import DiagnosticsCollector
+
+        self.diagnostics = {}
+        self.diagnostics_collector = DiagnosticsCollector()
+
     def log(self, msg: str):
         from datetime import datetime
         print(f"[{datetime.now().strftime('%H:%M:%S')}] [ANALYSIS] {msg}")

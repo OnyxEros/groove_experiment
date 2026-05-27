@@ -1,59 +1,41 @@
 from analysis.core.step import AnalysisStep
 from analysis.core.registry import register_step
-from analysis.viz.spaces_figure import SpacesFigure
+from analysis.viz.dataset_structure import DatasetStructureFigure
 from analysis.viz.generative_validation import GenerativeValidation
-from analysis.viz.cluster_interpretation import ClusterInterpretation
 
 
 @register_step("viz")
 class VizStep(AnalysisStep):
-
     name = "viz"
 
     def run(self, context):
         rm = context.run_manager
-        cache = context.cache
-        df = context.dataset
+        
+        # 1. On sépare explicitement les deux flux de données
+        df_gen = context.dataset  # Données générées stochastiquement
+        df_real = context.cache.get("df_real")  # Corpus réel injecté depuis run.py
+        
+        # Fallback de sécurité si df_real n'a pas été injecté (pour rétrocompatibilité)
+        if df_real is None:
+            print("⚠️ [VizStep] 'df_real' introuvable dans le cache. Utilisation de context.dataset par défaut.")
+            df_real = df_gen
 
-        # =====================================================
-        # SAFE EXTRACTION (corrected keys)
-        # =====================================================
-        umap_realized = cache.get("umap_realized", None)
-        umap_realized_3d = cache.get("umap_realized_3d", None)
-        umap_emergent = cache.get("umap_emergent", None)
-        labels = cache.get("clusters", None)
-        metrics = cache.get("metrics_matrix", None)
+        # Sécurisation : on s'assure que le sous-dossier 'figures' existe
+        fig_dir = rm.run_dir / "figures"
+        fig_dir.mkdir(parents=True, exist_ok=True)
 
-# =====================================================
-        # SPACES FIGURE — nécessite les deux projections UMAP + clusters
-        # =====================================================
-        if umap_realized is not None and umap_emergent is not None and labels is not None:
-            SpacesFigure().plot(
-                df=df,
-                umap_emergent=umap_emergent,
-                umap_realized=umap_realized,
-                labels=labels,
-                path=rm.run_dir / "figures/spaces_figure.png"
-            )
-
-        # =====================================================
-        # GENERATIVE VALIDATION — nécessite seulement df
-        # =====================================================
+        # 2. Validation générative -> Analyse du Moteur (utilise les données générées/répétées)
         GenerativeValidation().plot(
-            df=df,
-            path=rm.run_dir / "figures/generative_validation.png",
-            verbose=True
+            df=df_gen,
+            path=fig_dir / "generative_validation.pdf",
+            verbose=True,
         )
 
-        # =====================================================
-        # CLUSTER INTERPRETATION — nécessite df + labels
-        # =====================================================
-        if labels is not None:
-            ClusterInterpretation().plot(
-                df=df,
-                labels=labels,
-                path=rm.run_dir / "figures/cluster_interpretation.png"
-            )
-     
+        # 3. Structure du dataset -> Analyse du Corpus (utilise les données réelles/uniques)
+        DatasetStructureFigure().plot(
+            df=df_real,
+            path=fig_dir / "dataset_structure.pdf",
+            verbose=True,
+        )
 
         return context

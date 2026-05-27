@@ -1,80 +1,62 @@
+"""
+analysis/steps/projection.py
+=============================
+Projections UMAP des espaces de représentation.
+
+- umap_realized (2D + 3D) : depuis emb_realized (RealizedEmbedding).
+- umap_emergent supprimé : était un doublon de umap_realized
+  (même colonnes D/S/E/P, même scaler, même UMAP params).
+- metric="cosine", min_dist=0.4, n_neighbors=15.
+"""
+
 import numpy as np
 import umap
-from sklearn.preprocessing import normalize
+
 from analysis.core.step import AnalysisStep
 from analysis.core.registry import register_step
 
 
 @register_step("projection")
 class ProjectionStep(AnalysisStep):
+
     name = "projection"
 
+    UMAP_PARAMS = dict(
+        metric="cosine",
+        n_neighbors=15,
+        min_dist=0.4,
+    )
+
     def run(self, context):
-        df = context.dataset
-
-        # =====================================================
-        # ESPACE DES DESCRIPTEURS ÉMERGENTS
-        # Input: (D, I, V, S, E) depuis emb_realized
-        # =====================================================
         if "emb_realized" not in context.cache:
-            raise ValueError("ProjectionStep: missing 'emb_realized'")
+            raise ValueError("ProjectionStep: 'emb_realized' manquant dans le cache")
 
-        emb_realized = np.asarray(context.cache["emb_realized"])
-        if emb_realized.ndim != 2:
-            raise ValueError(f"ProjectionStep: invalid emb_realized shape {emb_realized.shape}")
+        emb = np.nan_to_num(np.asarray(context.cache["emb_realized"]))
 
-        emb_realized_norm = normalize(emb_realized)
-
-        reducer_realized = umap.UMAP(
-            n_components=2,
-            metric="cosine",
-            random_state=context.seed,
-            n_neighbors=15,
-            min_dist=0.1
-        )
-        umap_realized = reducer_realized.fit_transform(emb_realized_norm)
-
-        context.cache["umap_realized"]       = umap_realized
-        context.cache["umap_realized_model"] = reducer_realized
-
-        reducer_3d = umap.UMAP(
-            n_components=3,
-            metric="cosine",
-            random_state=context.seed,
-            n_neighbors=15,
-            min_dist=0.1
-        )
-        umap_realized_3d = reducer_3d.fit_transform(emb_realized_norm)
-        context.cache["umap_realized_3d"] = umap_realized_3d
-
-        # =====================================================
-        # ESPACE ÉMERGENT
-        # Input: (D, I, V, S_mv) — théorique depuis paramètres génératifs
-        # =====================================================
-        if all(col in df.columns for col in ["D", "I", "V", "S_mv"]):
-            X_emergent = df[["D", "I", "V", "S_mv"]].values
-
-            reducer_emergent = umap.UMAP(
-                n_components=2,
-                metric="euclidean",
-                random_state=context.seed,
-                n_neighbors=15,
-                min_dist=0.1
+        if emb.ndim != 2:
+            raise ValueError(
+                f"ProjectionStep: shape invalide pour emb_realized : {emb.shape}"
             )
-            umap_emergent = reducer_emergent.fit_transform(X_emergent)
 
-            context.cache["umap_emergent"]       = umap_emergent
-            context.cache["umap_emergent_model"] = reducer_emergent
-        else:
-            context.cache["umap_emergent"] = None
+        seed = context.seed
 
-        # =====================================================
-        # ESPACE PARAMÉTRIQUE
-        # Input: (S_mv, D_mv, E_mv) — paramètres génératifs bruts
-        # =====================================================
-        if all(col in df.columns for col in ["S_mv", "D_mv", "E_mv"]):
-            context.cache["parametric_coords"] = df[["S_mv", "D_mv", "E_mv"]].values
-        else:
-            context.cache["parametric_coords"] = None
+        # ── 2D ───────────────────────────────────────────────────────────────
+        reducer_2d = umap.UMAP(n_components=2, random_state=seed, **self.UMAP_PARAMS)
+        context.cache["umap_realized"] = reducer_2d.fit_transform(emb)
+        # FIX #3 : umap_realized_model retiré du cache — jamais consommé ni exporté,
+        # conserve une référence volumineuse inutilement en mémoire.
+
+        # ── 3D ───────────────────────────────────────────────────────────────
+        reducer_3d = umap.UMAP(n_components=3, random_state=seed, **self.UMAP_PARAMS)
+        context.cache["umap_realized_3d"] = reducer_3d.fit_transform(emb)
+
+        # ── Coordonnées paramétriques (référence) ────────────────────────────
+        param_cols = ["S_mv", "D_mv", "E_mv"]
+        df = context.dataset
+        context.cache["parametric_coords"] = (
+            df[param_cols].values
+            if all(c in df.columns for c in param_cols)
+            else None
+        )
 
         return context

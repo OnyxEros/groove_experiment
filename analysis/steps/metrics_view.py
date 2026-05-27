@@ -5,31 +5,27 @@ from analysis.core.registry import register_step
 
 @register_step("metrics_view")
 class MetricsViewStep(AnalysisStep):
+    """
+    Construit la matrice des descripteurs émergents indépendants.
+    Aligné sur RealizedEmbedding.COLS — I et V exclus (redondants).
+    """
 
     name = "metrics_view"
 
-    def run(self, context):
+    # Doit rester synchronisé avec RealizedEmbedding.COLS
+    COLS = ["D", "S", "E", "P"]
 
+    def run(self, context):
         df = context.dataset
 
-        # Descripteurs émergents complets (D, I, V, S, E, P)
-        # P (push/pull inter-voix) était absent — ajouté pour aligner avec
-        # RealizedEmbedding.COLS et generator.py:Metrics.inter_voice_push()
-        required_cols = ["D", "I", "V", "S", "E", "P"]
-
-        missing = [c for c in required_cols if c not in df.columns]
-
+        missing = [c for c in self.COLS if c not in df.columns]
         if missing:
             raise ValueError(
-                f"MetricsViewStep missing columns: {missing}\n"
+                f"MetricsViewStep: colonnes manquantes {missing}\n"
                 "Vérifie que generator.py calcule bien tous les descripteurs émergents."
             )
 
-        metrics = np.stack(
-            [df[c].values for c in required_cols],
-            axis=1
-        )
-
+        metrics = np.stack([df[c].values for c in self.COLS], axis=1)
         context.cache["metrics_matrix"] = metrics
 
         return context
