@@ -569,9 +569,21 @@ def save_report(
             if not isinstance(vv, np.ndarray) and not kk.startswith("_")}
         for k, v in results.items()
     }
-    report_data: dict = {"features": features, "results": serializable}
-    if extra:
-        report_data["extra"] = extra
+    report_data: dict = {
+        "features": features,
+        "results":  serializable,
+        # Traçabilité du correctif de polarité — NE PAS SUPPRIMER
+        "polarity_fix": {
+            "applied":    True,
+            "convention": "P>0=Rushing (hi-hat en avance), P<0=Laid-back (hi-hat en retard)",
+            "note": (
+                "Les MP3 ont été générés avec le signe inversé de P/P_mv "
+                "(bug générateur v1-v3, campagne verrouillée). "
+                "La correction est appliquée avant tout calcul. "
+                "Les β(P) dans ce fichier suivent la convention physique standard."
+            ),
+        },
+    }
 
     with open(out_dir / "report.json", "w") as f:
         json.dump(_make_serializable(report_data), f, indent=2)

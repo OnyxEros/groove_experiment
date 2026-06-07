@@ -9,9 +9,23 @@ Simplifications v4 :
     - run_regression_all() supprimé (un seul feature set pertinent)
     - Comparaison AIC/BIC M0/M1 supprimée (degrés de liberté insuffisants)
 
-Correctif de polarité P :
-    P > 0  →  Rushing (avance temporelle du hi-hat)
-    P < 0  →  Laid-back (retard temporel du hi-hat)
+CORRECTIF DE POLARITÉ P — NOTE CRITIQUE
+========================================
+Le générateur v1–v3 inversait le signe physique de P / P_mv dans les MP3.
+Les stimuli étant figés (campagne verrouillée), on corrige en post-processing :
+
+    apply_polarity_fix_array()  →  appliqué sur X (données agrégées Ridge/ElasticNet)
+    apply_polarity_fix_df()     →  appliqué sur df_raw (données brutes LMM)
+
+Convention après correction (standard physique) :
+    P > 0  →  Rushing  (hi-hat en avance sur les voix d'ancrage)
+    P < 0  →  Laid-back (hi-hat en retard)
+
+⚠  CONSÉQUENCE POUR LA RÉDACTION :
+    Tous les coefficients β(P) et β(P_mv) dans les sorties (report.json,
+    forest plot, console) sont exprimés dans la convention CORRIGÉE.
+    Si β(P) > 0 → le Rushing augmente le groove.
+    Ne PAS inverser à nouveau lors de la rédaction.
 """
 
 from __future__ import annotations
@@ -56,6 +70,11 @@ def run_regression(
     )
 
     # ── Correctif de polarité P ───────────────────────────────────────────────
+    # Les MP3 ont été générés avec le signe inversé de P/P_mv (bug générateur v1-v3).
+    # La correction est appliquée ICI, avant tout fit de modèle.
+    # Les sorties (β, report.json, figures) utilisent la convention corrigée :
+    #   P > 0 = Rushing, P < 0 = Laid-back.
+    _log_polarity_fix(features)
     from config import apply_polarity_fix_array
     X = apply_polarity_fix_array(X, features)
 
@@ -104,20 +123,37 @@ def run_regression(
     best = _best_model(results)
 
     return {
-        "feature_set":    feature_set,
-        "features":       features,
-        "n_stimuli":      int(len(df)),
-        "exclude_single": exclude_single,
-        "models":         results,
-        "best_model":     best,
-        "best_r2":        results[best].get("r2_cv_mean") if best else None,
-        "out_dir":        out_dir,
+        "feature_set":       feature_set,
+        "features":          features,
+        "n_stimuli":         int(len(df)),
+        "exclude_single":    exclude_single,
+        "models":            results,
+        "best_model":        best,
+        "best_r2":           results[best].get("r2_cv_mean") if best else None,
+        "out_dir":           out_dir,
+        "polarity_fix_applied": True,   # P/P_mv corrigés avant tout calcul
+        "polarity_convention":  "P>0=Rushing, P<0=Laid-back (convention physique standard)",
     }
 
 
 # ============================================================
 # HELPERS PRIVÉS
 # ============================================================
+
+def _log_polarity_fix(features: list[str]) -> None:
+    """Log explicite du correctif de polarité — ne jamais supprimer."""
+    p_features = [f for f in features if "P" in f]
+    if not p_features:
+        return
+    w = 65
+    print(f"\n{'⚠ '*10}")
+    print(f"  CORRECTIF DE POLARITÉ APPLIQUÉ sur : {p_features}")
+    print(f"  Convention après correction :")
+    print(f"    P > 0  →  Rushing  (hi-hat EN AVANCE)")
+    print(f"    P < 0  →  Laid-back (hi-hat EN RETARD)")
+    print(f"  Les MP3 avaient le signe inversé (bug générateur v1-v3).")
+    print(f"  Tous les β(P) dans les sorties = convention CORRIGÉE.")
+    print(f"{'⚠ '*10}\n")
 
 def _run_db_check(refresh: bool) -> None:
     print("\n🔍  Vérification Supabase…")
