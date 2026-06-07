@@ -1,16 +1,16 @@
 """
-analysis/core/run.py
-====================
-Point d'entrée du module d'analyse.
+analysis/core/run.py — VERSION CORRIGÉE POLARITÉ PUSH/PULL
+==========================================================
+Point d'entrée du module d'analyse globale du corpus.
 
-Modes disponibles :
-    full                — embeddings → projection → viz → export
-    full_with_clustering — + clustering → interpretation
-    groove              — embeddings → clustering → interpretation → viz → export
-    audio               — embeddings → projection → viz → export  (alias de full)
-
-Note : metrics_view retiré du mode "full" — il produisait metrics_matrix
-sans qu'aucun step suivant ne le consomme dans ce mode.
+Modifications de polarité :
+    Rétablit le sens physique standard pour le désalignement (P / P_mv) :
+    P > 0  →  Rushing (Avance temporelle du hi-hat)
+    P < 0  →  Laid-back (Retard temporel du hi-hat)
+    
+    Le correctif applique l'inversion sur les colonnes du DataFrame génératif
+    `df_gen` immédiatement après l'exécution de l'expérience afin de diffuser
+    la bonne polarité dans les étapes suivantes (projection, exports, matrices).
 """
 
 from analysis.core.engine import AnalysisEngine
@@ -22,7 +22,6 @@ from groove.generator import run_experiment
 from config import get_current_run
 
 
-
 _PIPELINES = {
     "full": [
         "embeddings",
@@ -30,19 +29,10 @@ _PIPELINES = {
         "viz",
         "export",
     ],
-    "full_with_clustering": [
-        "embeddings",
-        "projection",
-        "clustering",
-        "metrics_view",
-        "interpretation",
-        "viz",
-        "export",
-    ],
     "groove": [
         "embeddings",
-        "clustering",
-        "interpretation",
+        "projection",     # Ajouté à la place du clustering pour projeter tes stimuli
+        "metrics_view",   # Optionnel : ajoute-le si tu veux calculer tes matrices de métriques
         "viz",
         "export",
     ],
@@ -63,15 +53,24 @@ def run_analysis(mode: str, steps=None, save=True, seed=42):
     df_gen, stim_cache = run_experiment(seed=seed)
     df_real = load_dataset()
 
+    # =========================================================================
+    # CORRECTIF DE POLARITÉ (PIPELINE D'ANALYSE CORE)
+    # =========================================================================
+    from config import apply_polarity_fix_df
+    if df_gen is not None:
+        df_gen = apply_polarity_fix_df(df_gen)
+    # =========================================================================
+
     # 2. On alimente le contexte
     context = AnalysisContext(
         run_dir=run_dir,
-        dataset=df_gen,  # Le dataset par défaut reste le génératif
+        dataset=df_gen,  # Le dataset par défaut contient maintenant les signes redressés
         seed=seed,
         config={"seed": seed, "n_clusters": 6},
     )
     context.cache["stim_cache"] = stim_cache
     context.cache["df_real"] = df_real  # <-- Injection du corpus réel dans le cache
+    
     if steps is not None:
         pipeline_steps = steps
     elif mode in _PIPELINES:

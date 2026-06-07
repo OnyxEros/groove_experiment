@@ -1,3 +1,15 @@
+"""
+analysis/steps/viz.py
+======================
+Step de visualisation — intégré au pipeline via @register_step("viz").
+
+Utilise l'API unifiée .plot(df, path, verbose) des deux classes de figure :
+    - GenerativeValidation  (analysis/viz/generative_validation.py)
+    - DatasetStructureFigure (analysis/viz/dataset_structure.py)
+"""
+
+from pathlib import Path
+
 from analysis.core.step import AnalysisStep
 from analysis.core.registry import register_step
 from analysis.viz.dataset_structure import DatasetStructureFigure
@@ -6,36 +18,47 @@ from analysis.viz.generative_validation import GenerativeValidation
 
 @register_step("viz")
 class VizStep(AnalysisStep):
+
     name = "viz"
 
     def run(self, context):
         rm = context.run_manager
-        
-        # 1. On sépare explicitement les deux flux de données
-        df_gen = context.dataset  # Données générées stochastiquement
-        df_real = context.cache.get("df_real")  # Corpus réel injecté depuis run.py
-        
-        # Fallback de sécurité si df_real n'a pas été injecté (pour rétrocompatibilité)
+
+        # ── Sources de données ────────────────────────────────────────────────
+        df_gen  = context.dataset
+        df_real = context.cache.get("df_real")
+
         if df_real is None:
-            print("⚠️ [VizStep] 'df_real' introuvable dans le cache. Utilisation de context.dataset par défaut.")
+            print(
+                "⚠️  [VizStep] 'df_real' introuvable dans le cache. "
+                "Utilisation de context.dataset par défaut."
+            )
             df_real = df_gen
 
-        # Sécurisation : on s'assure que le sous-dossier 'figures' existe
+        # ── Répertoire de sortie ──────────────────────────────────────────────
         fig_dir = rm.run_dir / "figures"
         fig_dir.mkdir(parents=True, exist_ok=True)
 
-        # 2. Validation générative -> Analyse du Moteur (utilise les données générées/répétées)
-        GenerativeValidation().plot(
-            df=df_gen,
-            path=fig_dir / "generative_validation.pdf",
-            verbose=True,
-        )
+        # ── Figure 1 : Validation générative ─────────────────────────────────
+        # Données générées (répétitions stochastiques) → analyse du moteur
+        try:
+            GenerativeValidation().plot(
+                df      = df_gen,
+                path    = fig_dir / "generative_validation.pdf",
+                verbose = True,
+            )
+        except Exception as e:
+            print(f"⚠️  [VizStep] GenerativeValidation échouée : {e}")
 
-        # 3. Structure du dataset -> Analyse du Corpus (utilise les données réelles/uniques)
-        DatasetStructureFigure().plot(
-            df=df_real,
-            path=fig_dir / "dataset_structure.pdf",
-            verbose=True,
-        )
+        # ── Figure 2 : Structure du dataset ──────────────────────────────────
+        # Données réelles (corpus unique) → analyse structurelle
+        try:
+            DatasetStructureFigure().plot(
+                df      = df_real,
+                path    = fig_dir / "dataset_structure.pdf",
+                verbose = True,
+            )
+        except Exception as e:
+            print(f"⚠️  [VizStep] DatasetStructureFigure échouée : {e}")
 
         return context

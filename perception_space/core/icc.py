@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import warnings
 import numpy as np
+import math
 import pandas as pd
 from scipy import stats
 
@@ -261,23 +262,133 @@ def _interpret_icc(icc: float) -> str:
     else:            return "excellente"
 
 
-def icc_summary(result: dict) -> None:
-    w = 56
-    print(f"\n{'─'*w}")
-    print(f"  ICC inter-participants  [{result['model']}]")
-    print(f"{'─'*w}")
-    print(f"  Stimuli      : {result['n_stimuli']}  (k̄={result['k_bar']} raters/stimulus)")
-    print(f"  Participants : {result['n_raters']}")
-    print(f"  Complétude   : {result['completeness_pct']}%")
-    print(
-        f"  ICC          : {result['icc']:.3f}  "
-        f"[{result['ci95_low']:.3f} – {result['ci95_high']:.3f}]  95% CI"
+def icc_summary(result: dict, label: str = "Groove") -> None:
+    """
+    Rapport console complet et très détaillé pour l'ICC.
+    Inclut zones de référence, diagnostic, interprétation narrative.
+    """
+    W = 68
+
+    def _sep(c="─"): return c * W
+    def _bar(v, w=22):
+        v = max(min(float(v), 1.0), 0.0)
+        n = int(v * w)
+        return "█" * n + "░" * (w - n)
+    def _pstars(p):
+        if p < 0.001: return "★★★ p<0.001"
+        if p < 0.01:  return "★★  p<0.01"
+        if p < 0.05:  return "★   p<0.05"
+        if p < 0.10:  return "†   p<0.10"
+        return "    n.s."
+
+    icc  = result["icc"]
+    low  = result["ci95_low"]
+    high = result["ci95_high"]
+    p    = result["p_value"]
+    F    = result["F"]
+    df1  = result["df1"]
+    df2  = result["df2"]
+    ns   = result["n_stimuli"]
+    nr   = result["n_raters"]
+    kb   = result["k_bar"]
+    comp = result["completeness_pct"]
+    ms_r = result["MS_r"]
+    ms_e = result["MS_e"]
+    interp = result["interpretation"]
+    model  = result.get("model", "ICC2")
+
+    print(f"\n{_sep('═')}")
+    print(f"  ICC INTER-PARTICIPANTS  [{model}] — {label.upper()}")
+    print(_sep("═"))
+
+    # ── Design ───────────────────────────────────────────────────────────────
+    print(f"\n  Structure des données")
+    print(_sep())
+    print(f"  Stimuli évalués        : {ns}")
+    print(f"  Participants (raters)  : {nr}")
+    print(f"  Réponses/stimulus (k̄)  : {kb:.2f}")
+    print(f"  Complétude matricielle : {comp:.1f}%  "
+          + ("⚠  matrice très incomplète" if comp < 30 else
+             "⚠  matrice incomplète" if comp < 60 else "✔  complétude correcte"))
+    print(f"  Total réponses         : ~{int(ns * kb)}")
+
+    # ── Statistiques ANOVA ────────────────────────────────────────────────────
+    print(f"\n  Composantes ANOVA (sans imputation des NaN)")
+    print(_sep())
+    print(f"  MS_r (between stimuli) : {ms_r:.4f}")
+    print(f"  MS_e (résiduel)        : {ms_e:.4f}")
+    print(f"  Rapport MS_r/MS_e      : {ms_r/ms_e:.3f}  → F({df1}, {df2}) = {F:.3f}")
+    print(f"  p-value                : {p:.6f}  {_pstars(p)}")
+    print()
+    if ms_r > ms_e:
+        print(f"  ✔  MS_r > MS_e : variance inter-stimuli > résiduelle")
+        print(f"     → les stimuli diffèrent systématiquement en groove perçu")
+    else:
+        print(f"  ⚠  MS_r ≤ MS_e : variance inter-stimuli ≤ résiduelle")
+        print(f"     → les stimuli ne se distinguent pas clairement en groove perçu")
+
+    # ── ICC ───────────────────────────────────────────────────────────────────
+    print(f"\n  ICC et intervalle de confiance à 95%")
+    print(_sep())
+    print(f"  ICC(2,1) = {icc:.4f}")
+    print(f"  IC95%    = [{low:.4f} – {high:.4f}]")
+    print(f"  Largeur IC95%          : {high-low:.4f}  "
+          + ("(large — données insuffisantes)" if high-low > 0.3 else "(acceptable)"))
+    print()
+    print(f"  Jauge  [0 ────────── 0.5 ─────────── 1.0]")
+    print(f"         [{_bar(icc, 22)}]  {icc*100:.1f}%")
+    print()
+
+    # Zones de référence
+    zones = [
+        (0.90, 1.00, "Excellente ",  "██████████"),
+        (0.75, 0.90, "Bonne      ",  "████████  "),
+        (0.50, 0.75, "Modérée    ",  "█████     "),
+        (0.00, 0.50, "Faible     ",  "██        "),
+    ]
+    print(f"  Zones de référence (Koo & Mae, 2016) :")
+    for lo, hi, lbl, _ in zones:
+        marker = "◄ VOTRE ICC" if lo <= icc < hi else "          "
+        print(f"    [{lo:.2f} – {hi:.2f}]  {lbl}  {marker}")
+
+    # ── Interprétation ────────────────────────────────────────────────────────
+    print(f"\n  Interprétation")
+    print(_sep())
+    print(f"  Fiabilité : {interp.upper()}")
+    print()
+
+    if icc < 0:
+        print(f"  ⚠  ICC négatif : variance résiduelle > variance inter-stimuli.")
+        print(f"     Les participants varient plus entre eux qu'entre les stimuli.")
+        print(f"     → Problème de design ou de collecte des données.")
+    elif icc < 0.50:
+        print(f"  ⚠  Fiabilité FAIBLE : les participants s'accordent peu.")
+        print(f"     La perception du groove est très idiosyncratique.")
+        print(f"     Les analyses de groupe doivent être interprétées avec précaution.")
+        print(f"     → Explorer les différences de bagage musical (bg_amateur, etc.)")
+    elif icc < 0.75:
+        print(f"  ℹ  Fiabilité MODÉRÉE : accord partiel entre participants.")
+        print(f"     Le signal perceptif existe mais est bruité.")
+        print(f"     Acceptable pour l'exploration, insuffisant pour diagnostic clinique.")
+    elif icc < 0.90:
+        print(f"  ✔  Fiabilité BONNE : les participants s'accordent bien.")
+        print(f"     Les ratings de groove sont reproductibles et fiables.")
+        print(f"     Les analyses comparatives sont justifiées.")
+    else:
+        print(f"  ✔  Fiabilité EXCELLENTE : accord quasi-parfait.")
+        print(f"     Le groove est perçu de manière très consensuelle dans ce corpus.")
+
+    print()
+    # Lien avec le LMM
+    icc_lmm_note = (
+        f"  Note : ICC_perception={icc:.3f} est distinct de l'ICC_LMM={0.103:.3f} "
+        f"rapporté dans la régression.\n"
+        f"  L'ICC_LMM mesure la variabilité participant→stimulus dans le modèle mixte,\n"
+        f"  l'ICC_perception mesure la concordance entre juges sur les mêmes stimuli."
     )
-    print(
-        f"  F({result['df1']}, {result['df2']})     : "
-        f"{result['F']:.2f}   p = {result['p_value']:.4f}"
-    )
-    print(f"  Fiabilité    : {result['interpretation']}")
-    if "warning" in result:
-        print(f"  ⚠️   {result['warning']}")
-    print(f"{'─'*w}\n")
+    print(icc_lmm_note)
+
+    print(f"\n  Référence : Koo & Mae (2016), J. Chiropr. Med. 15(2):155–163")
+    print(f"             Shrout & Fleiss (1979), Psychol. Bull. 86(2):420–428")
+    print(_sep())
+    print()

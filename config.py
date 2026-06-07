@@ -146,20 +146,6 @@ BASS_HUMANIZE_NOISE_RATIO: float = 0.03
 
 # =========================================================
 # MICRO-TIMING — JITTER EXPRESSIF
-#
-# Calibration v2 :
-#   Les valeurs initiales (SWING_MAX_RATIO=0.12, DRIFT=0.10, NOISE=0.10)
-#   produisaient un swing maximal de ~8ms à 90bpm, en-dessous du seuil
-#   de détection documenté pour des non-musiciens (~10–15ms,
-#   Honing & Ladinig 2009 ; Madison 2006).
-#
-#   Les valeurs ci-dessous sont recalibrées pour rester dans les bornes
-#   réalistes de la batterie humaine tout en restant perceptibles :
-#     E_mv=0   → swing baseline ~2.6ms  (tight, quasi-robotique)
-#     E_mv=0.5 → swing total    ~9.2ms  (légèrement swingué)
-#     E_mv=1.0 → swing total    ~15.5ms (swing jazz/funk audible)
-#   Ces valeurs correspondent aux plages mesurées par Frane & Shams (2017)
-#   sur des batteurs humains en contexte funk.
 # =========================================================
 
 SWING_BASELINE  = 0.04   # 4% du step — inchangé (E_mv=0 reste "serré")
@@ -169,16 +155,6 @@ NOISE_MAX_RATIO = 0.14   # était 0.10
 
 # =========================================================
 # HUMANISATION DE LA VÉLOCITÉ — liée à E_mv
-#
-# E_mv encode l'amplitude des déviations expressives.
-# Cette définition est étendue à la dynamique (vélocité) en cohérence
-# avec Gabrielsson (1999) : timing et vélocité sont les deux composantes
-# principales du geste expressif en percussion.
-#
-#   E_mv=0   → vélocités fixes (pas de fluctuation)
-#   E_mv=0.5 → sigma ~4pts MIDI  (~5%)
-#   E_mv=1.0 → sigma ~8pts MIDI  (~10%) — en-dessous du seuil
-#              de quantification perceptive mais perceptible globalement
 # =========================================================
 
 VELOCITY_HUMANIZE_SIGMA = 8.0   # sigma de base à E_mv=1.0 (pts MIDI)
@@ -209,16 +185,6 @@ PUSH_MAX_RATIO = 0.11
 
 # =========================================================
 # PAD HARMONIQUE INVARIANT
-#
-# Un accord Am7 tenu (vélocité faible, program=89 "Pad 2 warm")
-# est ajouté comme fond harmonique constant sur tous les stimuli.
-# Étant strictement invariant entre conditions, il ne confond
-# aucune variable manipulée — même logique que la basse (cf. §2.2.2).
-#
-# Objectif : ancrer perceptivement les variations du hi-hat pour
-# les participants sans culture musicale formelle.
-# Référence : Witek et al. (2014) utilisent un fond harmonique stable
-# dans leurs stimuli de groove.
 # =========================================================
 
 PAD_ENABLED    = True
@@ -251,6 +217,43 @@ E_LEVELS = E_mv_LEVELS
 P_LEVELS = P_mv_LEVELS
 
 # =========================================================
+# CHARTE GRAPHIQUE (PLOTS & FIGURES)
+# =========================================================
+
+# Palette de couleurs académiques (colorblind-friendly)
+C_PRIMARY = "#2b5c8f"    # Bleu académique (Ancrage, Densité)
+C_ACCENT  = "#c94c4c"    # Rouge brique (Redondances, Alertes)
+C_MUTED   = "#6d7a82"    # Gris ardoise (Variables secondaires)
+C_VALID   = "#2e7d32"    # Vert forêt (Couplages cibles réussis)
+C_WARN    = "#ef6c00"    # Orange chaud (Couplages modérés)
+
+PLOT_STYLE = {
+    "text.usetex": True,
+    "font.family": "serif",
+    "font.serif": ["Computer Modern Roman"],
+    "axes.labelsize": 11,
+    "xtick.labelsize": 9,
+    "ytick.labelsize": 9,
+    "figure.titlesize": 13,
+    "legend.fontsize": 9,
+    "axes.spines.top": False,
+    "axes.spines.right": False,
+    "axes.grid": True,
+    "grid.alpha": 0.2,
+    "grid.linestyle": "--"
+}
+
+def set_academic_style() -> None:
+    """Applique la charte graphique globale à Matplotlib.
+    Cette fonction échoue silencieusement si matplotlib n'est pas installé,
+    permettant l'usage de config.py côté serveur web/backend."""
+    try:
+        import matplotlib.pyplot as plt
+        plt.rcParams.update(PLOT_STYLE)
+    except ImportError:
+        pass
+
+# =========================================================
 # UMAP
 # =========================================================
 
@@ -262,17 +265,11 @@ UMAP_CONFIG = {
     "random_state":  SEED,
 }
 
-
 # =========================================================
 # SEUILS RT — SOURCE DE VÉRITÉ UNIQUE
-# Justification RT_MIN : stimulus ~6.7s à 90bpm.
-# Un participant attentif peut répondre dès 1.5s d'écoute.
-# 4.0s filtrait ~15% des réponses rapides légitimes (biais sélection).
-# Référence : Madison (2006) seuil 1s pour stimuli rythmiques comparables.
 # =========================================================
 RT_MIN_S = 1.5
 RT_MAX_S = 600.0
-
 
 # =========================================================
 # DERIVED VALUES
@@ -297,6 +294,102 @@ def alpha_from_sync_level(sync_level: int) -> float:
 def push_from_p_level(p_level: int) -> float:
     max_level = max(abs(p) for p in P_mv_LEVELS) if P_mv_LEVELS else 1
     return (p_level / max_level) * PUSH_MAX_RATIO if max_level > 0 else 0.0
+
+
+# =========================================================
+# CORRECTIF DE POLARITÉ PUSH/PULL
+# =========================================================
+# Le générateur v1-v3 inversait le signe physique du désalignement (P / P_mv).
+# Les stimuli MP3 étant figés (campagne verrouillée), on corrige la polarité
+# en post-processing dans chaque module d'analyse.
+#
+# Source unique de vérité : ces deux fonctions sont les SEULS endroits
+# autorisés à inverser P. Ne pas dupliquer cette logique ailleurs.
+#
+# Convention physique cible (après correctif) :
+#   P > 0  →  Rushing  (hi-hat en avance / push)
+#   P < 0  →  Laid-back (hi-hat en retard / pull)
+#
+# Colonnes concernées :
+#   DataFrames : "P", "P_mv", et tout terme d'interaction direct "D_x_P"
+#   Arrays     : la colonne dont le nom est "P" dans RealizedEmbedding.COLS
+
+P_POLARITY_FLIP = True   # mettre False si un futur générateur corrige le bug
+
+# Colonnes DataFrame à inverser (exhaustif)
+_P_COLS_DF = {"P", "P_mv", "D_x_P"}
+
+# Colonnes array à inverser — doit rester synchronisé avec RealizedEmbedding.COLS
+_P_COLS_ARRAY = {"P"}
+
+
+def apply_polarity_fix_df(df, extra_cols=None):
+    """
+    Inverse les colonnes de polarité P dans un DataFrame pandas.
+
+    Args:
+        df        : pd.DataFrame (modifié en place sur une copie)
+        extra_cols: set de colonnes supplémentaires à inverser (optionnel)
+
+    Returns:
+        pd.DataFrame avec les colonnes P corrigées.
+
+    Usage:
+        from config import apply_polarity_fix_df
+        df = apply_polarity_fix_df(df)
+    """
+    if not P_POLARITY_FLIP:
+        return df
+
+    import pandas as pd
+    cols_to_flip = _P_COLS_DF | (extra_cols or set())
+
+    df = df.copy()
+    flipped = []
+    for col in cols_to_flip:
+        if col in df.columns:
+            df[col] = -df[col]
+            flipped.append(col)
+
+    if flipped:
+        print(f"  ℹ  [polarity_fix] Inversion P appliquée sur : {flipped}")
+    return df
+
+
+def apply_polarity_fix_array(X, col_names):
+    """
+    Inverse les colonnes de polarité P dans un array numpy.
+
+    Utilise les noms de colonnes pour localiser P — pas d'index hardcodé.
+
+    Args:
+        X         : np.ndarray shape (n, d)
+        col_names : list[str] — noms des colonnes de X dans l'ordre
+
+    Returns:
+        np.ndarray avec les colonnes P corrigées (copie).
+
+    Usage:
+        from config import apply_polarity_fix_array
+        from analysis.embeddings.realized import RealizedEmbedding
+        X = apply_polarity_fix_array(X, RealizedEmbedding.COLS)
+    """
+    if not P_POLARITY_FLIP:
+        return X
+
+    import numpy as np
+    X = X.copy()
+    flipped = []
+    for i, name in enumerate(col_names):
+        if name in _P_COLS_ARRAY:
+            X[:, i] = -X[:, i]
+            flipped.append(f"{name}[col={i}]")
+
+    if flipped:
+        print(f"  ℹ  [polarity_fix] Inversion P appliquée sur : {flipped}")
+    return X
+
+
 
 # =========================================================
 # HELPERS

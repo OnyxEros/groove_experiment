@@ -3,54 +3,24 @@ cli.py
 ======
 Point d'entrée unique du système Groove Experiment.
 
-Notation :
-    Paramètres génératifs : S_mv, D_mv, E_mv, P_mv
-    Descripteurs émergents : D, I, V, S, E, P
-
-Pipeline du mémoire
--------------------
-    §4.1 Générateur rythmique
-        make generate    → génère les stimuli, MIDI, MP3, metadata.csv
-        make validate    → figures de validation structurelle (§4.1.4)
-        make preview     → écoute 3 stimuli de référence
-
-    §4.2 Collecte des données
-        make serve       → démarre le serveur de l'expérience
-        make sync        → rapatrie les réponses Supabase → CSV local
-
-    §5 Espace latent
-        make new-run     → crée un dossier de run horodaté
-        make analysis    → embeddings → UMAP → clustering → export
-
-    §6 Modélisation statistique
-        make regression  → Ridge · ElasticNet · SVR · RF · LMM (3 feature sets)
-        make perception  → alignement Ridge espace latent → groove_mean
-        make perc-space  → ICC · test de Mantel · géométrie locale
-
-    Pipeline complet
-        make thesis      → sync + analysis + regression + perception + perc-space
-        make figures     → collecte toutes les figures dans figures/
-
-Architecture des données
-------------------------
-    fetch_ratings()           → FORMAT LONG   (1 ligne / réponse, participant_id)
-                                → perception-space (ICC, cohérence, variabilité)
-
-    load_ratings_df()         → FORMAT AGRÉGÉ (1 ligne / stimulus)
-                                → regression, perception (Ridge)
-
-    load_perceptual_dataset() → FORMAT JOINT  (stimuli × ratings agrégés)
-                                → alignment Ridge avec features acoustiques
+v2 — Améliorations campagne :
+    - cmd_generate : bloqué si .groove_locked existe (sauf --force)
+    - cmd_lock     : crée/vérifie le verrou avec checksum MD5 des MP3
+    - cmd_clean    : bloqué si .groove_locked existe
+    - cmd_sync     : validation croisée stim_ids Supabase ↔ metadata.csv
+    - cmd_status   : affiche couverture des stimuli (n réponses par stimulus)
 """
 
 from __future__ import annotations
 
 import argparse
+import hashlib
 import shutil
 import sys
 import time
 import traceback
 from contextlib import contextmanager
+from datetime import datetime
 from pathlib import Path
 
 try:
@@ -67,10 +37,14 @@ except ImportError:
 from config import (
     ANALYSIS_DIR, METADATA_PATH, MIDI_DIR, MP3_DIR,
     PREVIEW_DIR, RESP_FILE, SOUNDFONT_PATH, WAV_DIR,
+    BASE_DIR, SEED,
     ensure_data_dirs,
 )
 
 _console = Console() if _RICH else None
+
+# ── Fichier de verrou campagne ────────────────────────────
+LOCK_FILE = BASE_DIR / ".groove_locked"
 
 
 # =========================================================
@@ -185,6 +159,89 @@ def _check_deps() -> dict[str, bool]:
 
 
 # =========================================================
+# VERROU CAMPAGNE
+# =========================================================
+
+def _check_lock(force: bool = False) -> None:
+    """Bloque l'opération si le verrou campagne est actif."""
+    if LOCK_FILE.exists() and not force:
+        msg = LOCK_FILE.read_text().strip()
+        safe_exit(
+            f"Opération bloquée — campagne en cours.\n"
+            f"  {LOCK_FILE.name} :\n"
+            + "\n".join(f"    {line}" for line in msg.splitlines()) +
+            f"\n\n  Pour forcer (DANGER) : ajouter --force"
+        )
+
+
+def _compute_mp3_checksum() -> tuple[str, int]:
+    """Calcule le MD5 de l'ensemble des MP3 dans MP3_DIR."""
+    mp3_files = sorted(MP3_DIR.rglob("*.mp3"))
+    digest    = hashlib.md5()
+    for f in mp3_files:
+        digest.update(f.name.encode())   # nom dans le hash pour détecter les renommages
+        digest.update(f.read_bytes())
+    return digest.hexdigest(), len(mp3_files)
+
+
+def cmd_lock(dry_run: bool = False) -> None:
+    """
+    Crée le fichier de verrou .groove_locked avec :
+        - date de verrouillage
+        - seed utilisée pour la génération
+        - nombre de stimuli
+        - MD5 de l'ensemble des MP3
+
+    Si le verrou existe déjà, vérifie l'intégrité des MP3.
+    """
+    if dry_run:
+        _print("🔒  [DRY-RUN] Verrouillage ignoré")
+        return
+
+    if not MP3_DIR.exists() or not list(MP3_DIR.rglob("*.mp3")):
+        safe_exit(f"Aucun MP3 trouvé dans {MP3_DIR} — génère d'abord les stimuli.")
+
+    import pandas as pd
+    n_stimuli = len(pd.read_csv(METADATA_PATH)) if METADATA_PATH.exists() else "?"
+
+    with step("Calcul du checksum MD5 des MP3"):
+        checksum, n_mp3 = _compute_mp3_checksum()
+
+    if LOCK_FILE.exists():
+        # Mode vérification
+        existing = LOCK_FILE.read_text()
+        if f"md5={checksum}" in existing:
+            _print("✔  Intégrité vérifiée — les MP3 n'ont pas changé")
+        else:
+            _warn(
+                "⚠️  CHECKSUM DIVERGE — les MP3 ont été modifiés depuis le verrouillage !\n"
+                "   Compare les MD5 dans .groove_locked avec le checksum actuel :"
+            )
+            _info(f"  MD5 actuel  : {checksum}")
+            for line in existing.splitlines():
+                if line.startswith("md5="):
+                    _info(f"  MD5 verrou  : {line}")
+        return
+
+    # Création du verrou
+    content = (
+        f"date={datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+        f"seed={SEED}\n"
+        f"n_stimuli={n_stimuli}\n"
+        f"n_mp3={n_mp3}\n"
+        f"md5={checksum}\n"
+        f"note=Campagne en cours. Ne pas régénérer les stimuli.\n"
+    )
+    LOCK_FILE.write_text(content)
+    _print(
+        f"🔒  Verrou créé → {LOCK_FILE.name}\n"
+        f"   {n_mp3} MP3 checksummés (MD5={checksum[:12]}…)"
+    )
+    _info("Pour vérifier l'intégrité plus tard : python cli.py --lock")
+    _info("Pour déverrouiller manuellement    : rm .groove_locked")
+
+
+# =========================================================
 # STATUS
 # =========================================================
 
@@ -202,6 +259,13 @@ def cmd_status() -> None:
     table.add_column("Composant",  style="cyan",  min_width=18)
     table.add_column("Chemin",     style="dim",   min_width=36)
     table.add_column("État",       justify="center")
+
+    # ── Verrou ───────────────────────────────────────────
+    if LOCK_FILE.exists():
+        lock_info = LOCK_FILE.read_text().strip().replace("\n", " | ")
+        table.add_row("🔒 Verrou campagne", str(LOCK_FILE), f"[yellow]ACTIF[/yellow]  {lock_info[:60]}…")
+    else:
+        table.add_row("🔒 Verrou campagne", str(LOCK_FILE), "[dim]—  (pas de verrou)[/dim]")
 
     dirs = {
         "MIDI dir":     MIDI_DIR,
@@ -223,7 +287,7 @@ def cmd_status() -> None:
             extra = f" ({size/1024:.0f} KB)"
         table.add_row(name, str(path) + extra, badge)
 
-    # Réponses locales
+    # ── Réponses locales + couverture stimuli ─────────────
     resp = Path(RESP_FILE)
     if resp.exists():
         try:
@@ -232,17 +296,32 @@ def cmd_status() -> None:
             n_resp  = len(df)
             n_parts = df["participant_id"].nunique() if "participant_id" in df.columns else "?"
             n_stims = df["stim_id"].nunique() if "stim_id" in df.columns else "?"
+
+            # Couverture
+            coverage_str = ""
+            if METADATA_PATH.exists():
+                meta       = pd.read_csv(METADATA_PATH)
+                n_total    = len(meta)
+                counts     = df.groupby("stim_id").size() if "stim_id" in df.columns else pd.Series(dtype=int)
+                n_min2     = int((counts >= 2).sum())
+                pct        = round(n_stims / n_total * 100) if n_total > 0 else 0
+                pct_min2   = round(n_min2 / n_total * 100)  if n_total > 0 else 0
+                coverage_str = (
+                    f"  |  {n_stims}/{n_total} stimuli ({pct}%)"
+                    f"  |  {n_min2} avec ≥2 rép. ({pct_min2}%)"
+                )
+
             table.add_row(
                 "responses.csv",
                 str(resp),
-                f"[green]✔  ({n_resp} réponses · {n_parts} participants · {n_stims} stimuli)[/green]",
+                f"[green]✔  ({n_resp} rép. · {n_parts} part.{coverage_str})[/green]",
             )
         except Exception:
             table.add_row("responses.csv", str(resp), "[yellow]⚠  illisible[/yellow]")
     else:
         table.add_row("responses.csv", str(resp), "[dim]–  (pas encore synchronisé)[/dim]")
 
-    # Run courant
+    # ── Run courant ───────────────────────────────────────
     current_run_file = Path(".current_run")
     if current_run_file.exists():
         run_path = Path(current_run_file.read_text().strip())
@@ -264,7 +343,7 @@ def cmd_status() -> None:
 # CLEAN
 # =========================================================
 
-def cmd_clean(targets: list[str], dry_run: bool = False) -> None:
+def cmd_clean(targets: list[str], dry_run: bool = False, force: bool = False) -> None:
     if not targets:
         targets = ["all"]
 
@@ -283,6 +362,10 @@ def cmd_clean(targets: list[str], dry_run: bool = False) -> None:
 
     if "all" in targets:
         targets = list(dispatch.keys())
+
+    # Guard : "outputs" ou "all" = destruction potentielle des MP3
+    if any(t in ("outputs", "all") for t in targets):
+        _check_lock(force=force)
 
     for target in targets:
         if target not in dispatch:
@@ -361,27 +444,17 @@ def cmd_generate(
     n_repeats: int | None,
     skip_audio: bool = False,
     dry_run: bool = False,
-    force: bool = False, 
+    force: bool = False,
 ) -> None:
     """
     §4.1  Génère les stimuli, exporte les MIDI, rend les MP3.
 
-    Produit :
-        data/midi/          — fichiers MIDI par stimulus
-        data/mp3/           — fichiers MP3 normalisés (EBU R128 –16 LUFS)
-        data/metadata.csv   — design × descripteurs émergents × chemins audio
+    Bloqué si .groove_locked existe (campagne en cours).
+    Utiliser --force pour outrepasser (DANGER).
     """
-    # ── Verrou campagne ───────────────────────────────────────────────────────
-    lock_file = BASE_DIR / ".groove_locked"
-    if lock_file.exists() and not force:
-        msg = lock_file.read_text().strip()
-        safe_exit(
-            f"Génération bloquée — campagne en cours.\n"
-            f"  {lock_file} : {msg}\n\n"
-            f"  Pour forcer (DANGER) : python cli.py --generate --force"
-        )
-    # ── fin verrou ────────────────────────────────────────────────────────────
-    
+    # ── Guard verrou ──────────────────────────────────────
+    _check_lock(force=force)
+
     if dry_run:
         _print("🎛️   [DRY-RUN] Pipeline de génération — rien ne sera écrit")
         return
@@ -424,6 +497,7 @@ def cmd_generate(
     _print(
         f"✔  Génération terminée — {len(df)} stimuli · {n_mp3} MP3 → {METADATA_PATH}"
     )
+    _info("N'oublie pas de créer le verrou avant de lancer la campagne : python cli.py --lock")
 
 
 # =========================================================
@@ -431,18 +505,6 @@ def cmd_generate(
 # =========================================================
 
 def cmd_validate(dry_run: bool = False) -> None:
-    """
-    §4.1.4  Génère les figures de validation structurelle du générateur.
-
-    Produit (dans le run courant / figures/) :
-        generative_validation.pdf  — matrice de couplage, stabilité stochastique,
-                                     distribution topologique, VIF (Panel A–D)
-        dataset_structure.pdf      — corrélations inter-descripteurs, ACP,
-                                     violins de sensibilité, UMAP (Panel A–D)
-
-    Ces figures correspondent directement à la section §4.1.4 du mémoire :
-    « Validation du moteur de synthèse rythmique ».
-    """
     if dry_run:
         _print("🔬  [DRY-RUN] Validation structurelle ignorée")
         return
@@ -478,16 +540,10 @@ def cmd_validate(dry_run: bool = False) -> None:
 
 
 # =========================================================
-# §4.1  — PREVIEW
+# §4.1 — PREVIEW
 # =========================================================
 
 def cmd_preview(seed: int = 42, dry_run: bool = False) -> None:
-    """
-    Génère 3 stimuli de référence pour écoute comparative :
-        baseline    S_mv=0 D_mv=1 E_mv=0.0 P_mv=0  — groove mécanique
-        swing       S_mv=0 D_mv=1 E_mv=0.5 P_mv=0  — swing modéré
-        syncopated  S_mv=2 D_mv=1 E_mv=0.0 P_mv=0  — syncopation forte
-    """
     if dry_run:
         _print("🎧  [DRY-RUN] Preview ignoré")
         return
@@ -544,12 +600,6 @@ def cmd_preview(seed: int = 42, dry_run: bool = False) -> None:
 # =========================================================
 
 def cmd_serve(dry_run: bool = False) -> None:
-    """
-    §4.2  Démarre le serveur FastAPI de l'expérience perceptive.
-
-    Accessible sur http://localhost:8000
-    Participants évaluent 30 stimuli (groove + complexité sur échelle 1–7).
-    """
     if dry_run:
         _print("🌐  [DRY-RUN] Serveur ignoré")
         return
@@ -575,10 +625,7 @@ def cmd_sync(dry_run: bool = False) -> None:
     """
     §4.2  Rapatrie les réponses depuis Supabase vers le cache local.
 
-    Produit :
-        data/responses.csv  — format long (1 ligne / réponse)
-                              colonnes : participant_id, stim_id, groove,
-                              complexity, rt, listen_duration, musical_background
+    Valide en plus que les stim_ids dans Supabase correspondent à metadata.csv.
     """
     if dry_run:
         _print("☁️   [DRY-RUN] Sync Supabase ignoré")
@@ -593,17 +640,58 @@ def cmd_sync(dry_run: bool = False) -> None:
             safe_exit("Aucune réponse dans Supabase (table 'responses' vide).")
         df = pd.DataFrame(data)
 
+    # ── Validation croisée stim_ids ───────────────────────
+    if METADATA_PATH.exists():
+        with step("Valider les stim_ids ↔ metadata.csv"):
+            meta     = pd.read_csv(METADATA_PATH)
+            meta_ids = set(meta["stim_id"].astype(str)) if "stim_id" in meta.columns else set()
+            resp_ids = set(df["stim_id"].astype(str))   if "stim_id" in df.columns  else set()
+
+            orphans = resp_ids - meta_ids
+            if orphans:
+                _warn(
+                    f"{len(orphans)} stim_id dans Supabase absents de metadata.csv :\n"
+                    + "  " + ", ".join(sorted(orphans)[:10])
+                    + ("…" if len(orphans) > 10 else "")
+                    + "\n  → Ces réponses seront exclues de la jointure metadata × ratings."
+                )
+            else:
+                _info(f"✔  Tous les stim_ids correspondent ({len(resp_ids)} IDs validés)")
+
+            # Stimuli sans aucune réponse
+            silent = meta_ids - resp_ids
+            if silent:
+                _warn(
+                    f"{len(silent)} stimuli sans aucune réponse dans Supabase.\n"
+                    + "  " + ", ".join(sorted(silent)[:10])
+                    + ("…" if len(silent) > 10 else "")
+                )
+
     with step("Écrire le cache local"):
         cache_path = Path(RESP_FILE)
         cache_path.parent.mkdir(parents=True, exist_ok=True)
         df.to_csv(cache_path, index=False)
 
     n_parts = df["participant_id"].nunique() if "participant_id" in df.columns else "?"
-    n_stims = df["stim_id"].nunique() if "stim_id" in df.columns else "?"
-    _print(
-        f"✔  {len(df)} réponses  ·  {n_parts} participants"
-        f"  ·  {n_stims} stimuli  →  {RESP_FILE}"
-    )
+    n_stims = df["stim_id"].nunique()        if "stim_id" in df.columns        else "?"
+
+    # Couverture rapide
+    if METADATA_PATH.exists():
+        n_total  = len(pd.read_csv(METADATA_PATH))
+        counts   = df.groupby("stim_id").size() if "stim_id" in df.columns else pd.Series(dtype=int)
+        n_min2   = int((counts >= 2).sum())
+        pct_cov  = round(n_stims / n_total * 100) if n_total > 0 else 0
+        pct_min2 = round(n_min2  / n_total * 100) if n_total > 0 else 0
+        _print(
+            f"✔  {len(df)} réponses  ·  {n_parts} participants\n"
+            f"   Stimuli : {n_stims}/{n_total} couverts ({pct_cov}%)"
+            f"  ·  {n_min2} avec ≥2 réponses ({pct_min2}%)"
+        )
+    else:
+        _print(
+            f"✔  {len(df)} réponses  ·  {n_parts} participants"
+            f"  ·  {n_stims} stimuli  →  {RESP_FILE}"
+        )
 
 
 # =========================================================
@@ -611,7 +699,6 @@ def cmd_sync(dry_run: bool = False) -> None:
 # =========================================================
 
 def cmd_new_run() -> None:
-    """§5  Crée un dossier de run horodaté dans data/analysis/."""
     from config import new_run
     run_dir = new_run()
     _print(f"✔  Run courant : {run_dir}")
@@ -622,23 +709,6 @@ def cmd_analysis(
     steps: list[str] | None = None,
     dry_run: bool = False,
 ) -> None:
-    """
-    §5  Pipeline d'analyse de l'espace latent.
-
-    Modes disponibles :
-        groove  (défaut) — embeddings → clustering → interpretation → viz → export
-        full             — embeddings → projection UMAP → viz → export
-        full_with_clustering — full + clustering + metrics
-
-    Produit dans le run courant :
-        embeddings/structural.npy   — espace génératif (S_mv, D_mv, E_mv, P_mv)
-        embeddings/realized.npy     — espace perceptif (D, S, E, P)
-        embeddings/umap_2d.npy      — projection 2D
-        clustering/labels.npy       — labels de cluster k-means
-        figures/                    — validation générative + structure dataset
-        stim_id_map.json            — mapping stim_id → ligne dans realized.npy
-        summary.json                — snapshot de debug
-    """
     if dry_run:
         _print(f"🧠  [DRY-RUN] Analysis — mode={mode}, steps={steps or 'default'}")
         return
@@ -660,26 +730,9 @@ def cmd_regression(
     exclude_single: bool = True,
     dry_run:        bool = False,
 ) -> None:
-    """
-    §6.2  Régression groove_mean ~ features acoustiques/génératifs.
-
-    Modèles : Ridge · ElasticNet · SVR · RandomForest · LMM (REML)
-
-    Feature sets :
-        design    — paramètres manipulés (S_mv, D_mv, E_mv, P_mv)
-        acoustic  — descripteurs réalisés (D, I, V, S, E, P)
-        all       — union design + acoustic
-        interactions — espace orthogonalisé + termes croisés (D², D×P, S×E, D×S)
-
-    Paramètres :
-        exclude_single (défaut True) — exclut les n=1 (groove_std artificiel)
-        --include-single             — reproduit le run v1 avec ces stimuli
-    """
     if dry_run:
         single_tag = "exclu" if exclude_single else "inclus"
-        _print(
-            f"📈  [DRY-RUN] Régression — features={feature_set}, n=1 {single_tag}"
-        )
+        _print(f"📈  [DRY-RUN] Régression — features={feature_set}, n=1 {single_tag}")
         return
 
     from regression.run import run_regression
@@ -707,7 +760,6 @@ def cmd_regression_all(
     exclude_single: bool = True,
     dry_run:        bool = False,
 ) -> None:
-    """§6.2  Lance la régression sur les 3 feature sets (design / acoustic / all)."""
     for fs in ("design", "acoustic", "all"):
         cmd_regression(
             feature_set=fs,
@@ -723,13 +775,6 @@ def cmd_regression_all(
 # =========================================================
 
 def cmd_perception(refresh: bool = False, dry_run: bool = False) -> None:
-    """
-    §6.3  Alignement Ridge : espace latent acoustique → groove_mean.
-
-    Source : load_perceptual_dataset() — format joint, 1 ligne / stimulus.
-    Features : descripteurs émergents D, I, V, S, E (réalisés).
-    Cible    : groove_mean (moyenne inter-participants par stimulus).
-    """
     if dry_run:
         _print("🧠  [DRY-RUN] Alignement perceptif ignoré")
         return
@@ -755,10 +800,7 @@ def cmd_perception(refresh: bool = False, dry_run: bool = False) -> None:
             )
 
         if "groove_mean" not in df.columns:
-            safe_exit(
-                "groove_mean absent du dataset joint.\n"
-                "Lancez d'abord : make sync"
-            )
+            safe_exit("groove_mean absent du dataset joint.\nLancez d'abord : make sync")
 
     with step(f"Alignement Ridge  [features={feature_cols}]"):
         model, metrics = fit_alignment(
@@ -783,26 +825,6 @@ def cmd_perception(refresh: bool = False, dry_run: bool = False) -> None:
 # =========================================================
 
 def cmd_perception_space(refresh: bool = False, dry_run: bool = False) -> None:
-    """
-    §6.4  Géométrie de l'espace perceptif.
-
-    Calcule :
-        ICC(2,1) inter-participants  — fiabilité des jugements
-        Test de Mantel               — corrélation distance latente / écart groove
-        Géométrie locale k-NN        — mean, std, slope, agreement par stimulus
-        Variabilité inter-stimuli    — stimuli ambigus vs consensus
-
-    Source : fetch_ratings() — FORMAT LONG (1 ligne / réponse, participant_id requis).
-
-    Produit dans le run courant / perception_space/ :
-        figures/umap_groove.png
-        figures/cluster_groove.png
-        figures/local_geometry_groove.png
-        figures/permutation_test.png
-        figures/icc_summary.png
-        figures/stimulus_variance.png
-        figures/effect_*.png         (si musical_background disponible)
-    """
     if dry_run:
         _print("🧠  [DRY-RUN] Espace perceptif ignoré")
         return
@@ -823,38 +845,32 @@ def cmd_perception_space(refresh: bool = False, dry_run: bool = False) -> None:
         n_resp  = len(df)
         n_parts = df["participant_id"].nunique() if "participant_id" in df.columns else "?"
         n_stims = df["stimulus_id"].nunique()
-        _info(
-            f"{n_resp} réponses  ·  {n_parts} participants"
-            f"  ·  {n_stims} stimuli"
-        )
+        _info(f"{n_resp} réponses  ·  {n_parts} participants  ·  {n_stims} stimuli")
 
     with step("Géométrie de l'espace perceptif  [ICC · Mantel · k-NN]"):
         results = run_perception_space(perception_data=df)
 
-    icc   = results.get("icc", float("nan"))
-    interp = results.get("icc_interp", "?")
+    icc      = results.get("icc",      float("nan"))
+    interp   = results.get("icc_interp", "?")
     mantel_r = results.get("mantel_r", float("nan"))
     mantel_p = results.get("mantel_p", float("nan"))
+    status   = results.get("status", "?")
+    fig_err  = results.get("fig_errors", [])
+
+    if fig_err:
+        _warn(f"Figures en échec ({len(fig_err)}) : {fig_err}")
 
     _print(
-        f"✔  ICC = {icc:.3f} ({interp})  ·  "
+        f"✔  [{status}] ICC = {icc:.3f} ({interp})  ·  "
         f"Mantel r = {mantel_r:.3f}  p = {mantel_p:.4f}"
     )
 
 
 # =========================================================
-# COLLECTE DES FIGURES DU MÉMOIRE
+# FIGURES
 # =========================================================
 
 def cmd_figures(out: str = "figures_memoire", dry_run: bool = False) -> None:
-    """
-    Collecte toutes les figures générées dans un dossier unique.
-
-    Parcourt le run courant et les sous-dossiers connus pour rassembler
-    tous les .png et .pdf produits par le pipeline dans out/.
-
-    Utile pour l'intégration LaTeX : \includegraphics{figures_memoire/...}
-    """
     if dry_run:
         _print(f"🖼   [DRY-RUN] Figures ignorées → {out}/")
         return
@@ -872,8 +888,7 @@ def cmd_figures(out: str = "figures_memoire", dry_run: bool = False) -> None:
     collected = 0
     for ext in ("*.png", "*.pdf"):
         for src in run_dir.rglob(ext):
-            # Préfixe avec le sous-dossier parent pour éviter les collisions
-            parent = src.parent.name
+            parent   = src.parent.name
             dst_name = f"{parent}__{src.name}" if parent != run_dir.name else src.name
             shutil.copy2(src, dest / dst_name)
             collected += 1
@@ -882,7 +897,7 @@ def cmd_figures(out: str = "figures_memoire", dry_run: bool = False) -> None:
 
 
 # =========================================================
-# PIPELINE COMPLET DU MÉMOIRE
+# PIPELINE COMPLET
 # =========================================================
 
 def cmd_thesis(
@@ -890,18 +905,6 @@ def cmd_thesis(
     exclude_single: bool = True,
     dry_run:        bool = False,
 ) -> None:
-    """
-    Pipeline complet du mémoire : sync → new-run → analysis → regression → perception.
-
-    Équivaut à :
-        make sync
-        make new-run
-        make analysis
-        make regression FEATURE_SET=all
-        make perception
-        make perc-space
-        make figures
-    """
     if dry_run:
         _print("📖  [DRY-RUN] Pipeline thèse — séquence complète")
         for cmd in ["sync", "new-run", "analysis (mode=groove)", "regression-all",
@@ -957,6 +960,7 @@ def build_parser() -> argparse.ArgumentParser:
 ══════════════════════════════════════════════════════════
  §4.1  Génération des stimuli
    python cli.py --generate                    → MIDI + MP3 + metadata.csv
+   python cli.py --lock                        → verrou + checksum MD5 des MP3
    python cli.py --validate                    → figures validation §4.1.4
    python cli.py --preview                     → 3 stimuli de référence
 
@@ -971,36 +975,26 @@ def build_parser() -> argparse.ArgumentParser:
  §6    Modélisation statistique
    python cli.py --regression-all --refresh    → Ridge · EN · SVR · RF · LMM
    python cli.py --perception --refresh        → alignement Ridge
-   python cli.py --perception-space            → ICC · Mantel · géométrie
+   python cli.py --perc-space                  → ICC · Mantel · géométrie
 
  Pipeline complet
    python cli.py --thesis                      → sync + analysis + modèles + figures
-   python cli.py --figures                     → collecte figures → figures_memoire/
 
  Utilitaires
-   python cli.py --status                      → état du système
+   python cli.py --status                      → état du système + couverture stimuli
+   python cli.py --lock                        → créer/vérifier le verrou campagne
    python cli.py --doctor                      → diagnostic Supabase + env
    python cli.py --dry-run --thesis            → simulation sans écriture
 
 ══════════════════════════════════════════════════════════
- ARCHITECTURE DES DONNÉES
+ VERROU CAMPAGNE (.groove_locked)
 ══════════════════════════════════════════════════════════
- fetch_ratings()            FORMAT LONG   (1 ligne / réponse)
-                            → --perception-space (ICC, variabilité)
+   python cli.py --lock          → crée le verrou + checksum MD5 des MP3
+   python cli.py --lock          → (si verrou existe) vérifie l'intégrité
+   rm .groove_locked             → déverrouillage manuel
+   python cli.py --generate --force  → forcer malgré le verrou (DANGER)
+   python cli.py --clean --force     → forcer le nettoyage (DANGER)
 
- load_ratings_df()          FORMAT AGRÉGÉ (1 ligne / stimulus)
-                            → --regression, --perception (Ridge)
-
- load_perceptual_dataset()  FORMAT JOINT  (stimuli × ratings)
-                            → --perception (features acoustiques)
-
-══════════════════════════════════════════════════════════
- STIMULI À RÉPONSE UNIQUE
-══════════════════════════════════════════════════════════
- Par défaut, les stimuli avec n=1 réponse sont exclus de la
- régression (groove_std=0.0 artificiel, pas de consensus).
- Pour reproduire le run v1 :
-   python cli.py --regression --include-single
 ══════════════════════════════════════════════════════════
 """,
     )
@@ -1008,7 +1002,9 @@ def build_parser() -> argparse.ArgumentParser:
     # ── §4.1 GÉNÉRATION ──────────────────────────────────────────────────────
     g = parser.add_argument_group("§4.1  Génération des stimuli")
     g.add_argument("--generate",   action="store_true",
-                   help="Génère MIDI + MP3 + metadata.csv")
+                   help="Génère MIDI + MP3 + metadata.csv (bloqué si .groove_locked)")
+    g.add_argument("--lock",       action="store_true",
+                   help="Crée/vérifie le verrou campagne avec checksum MD5")
     g.add_argument("--validate",   action="store_true",
                    help="Figures de validation du générateur (§4.1.4)")
     g.add_argument("--preview",    action="store_true",
@@ -1019,15 +1015,15 @@ def build_parser() -> argparse.ArgumentParser:
                    help="Répétitions par condition (écrase config.py)")
     g.add_argument("--skip-audio", action="store_true",
                    help="Ignorer le rendu audio (MIDI seulement)")
-    g.add_argument("--force", action="store_true",
-                   help="Ignore le verrou .groove_locked (DANGER)")
+    g.add_argument("--force",      action="store_true",
+                   help="Ignore le verrou .groove_locked — DANGER")
 
     # ── §4.2 COLLECTE ────────────────────────────────────────────────────────
     g = parser.add_argument_group("§4.2  Collecte des données")
     g.add_argument("--serve",  action="store_true",
                    help="Démarre le serveur FastAPI de l'expérience")
     g.add_argument("--sync",   action="store_true",
-                   help="Supabase → responses.csv (cache local)")
+                   help="Supabase → responses.csv + validation stim_ids")
 
     # ── §5 ANALYSE ───────────────────────────────────────────────────────────
     g = parser.add_argument_group("§5  Espace latent")
@@ -1064,7 +1060,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--include-single",
         action="store_true",
         default=False,
-        help="Inclut les stimuli n=1 dans la régression (désactive exclude_single)",
+        help="Inclut les stimuli n=1 dans la régression",
     )
     g.add_argument("--perception",       action="store_true",
                    help="Alignement Ridge espace latent → groove_mean")
@@ -1075,12 +1071,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     # ── PIPELINE THÈSE ───────────────────────────────────────────────────────
     g = parser.add_argument_group("Pipeline complet")
-    g.add_argument("--thesis",  action="store_true",
-                   help="Pipeline thèse complet (sync+analysis+modèles+figures)")
-    g.add_argument("--figures", action="store_true",
+    g.add_argument("--thesis",      action="store_true",
+                   help="Pipeline thèse complet")
+    g.add_argument("--figures",     action="store_true",
                    help="Collecte toutes les figures → figures_memoire/")
     g.add_argument("--figures-out", default="figures_memoire", metavar="DIR",
-                   help="Dossier de destination pour --figures (défaut: figures_memoire)")
+                   help="Dossier destination pour --figures")
 
     # ── INFRA ────────────────────────────────────────────────────────────────
     g = parser.add_argument_group("Infrastructure")
@@ -1094,17 +1090,20 @@ def build_parser() -> argparse.ArgumentParser:
         nargs="*",
         choices=["all", "outputs", "metadata", "responses", "analysis", "cache"],
         metavar="TARGET",
-        help="Nettoie les artefacts (all | outputs | metadata | responses | analysis | cache)",
+        help="Nettoie les artefacts (bloqué par .groove_locked sauf --force)",
     )
-    g.add_argument("--status",  action="store_true",  help="État du système")
-    g.add_argument("--doctor",  action="store_true",  help="Diagnostic Supabase + environnement")
-    g.add_argument("--dry-run", action="store_true",  help="Simulation — rien n'est écrit")
+    g.add_argument("--status",  action="store_true",
+                   help="État du système + couverture stimuli")
+    g.add_argument("--doctor",  action="store_true",
+                   help="Diagnostic Supabase + environnement")
+    g.add_argument("--dry-run", action="store_true",
+                   help="Simulation — rien n'est écrit")
 
     return parser
 
 
 _ACTION_FLAGS = {
-    "generate", "validate", "preview",
+    "generate", "lock", "validate", "preview",
     "serve", "sync",
     "new_run", "analysis", "analysis_only",
     "regression", "regression_all",
@@ -1117,8 +1116,8 @@ def main() -> None:
     parser = build_parser()
     args   = parser.parse_args()
     dry    = args.dry_run
+    force  = args.force
 
-    # exclude_single = True par défaut, False si --include-single
     exclude_single = not args.include_single
 
     if dry:
@@ -1134,10 +1133,9 @@ def main() -> None:
         return
 
     if args.clean is not None:
-        cmd_clean(args.clean or ["all"], dry_run=dry)
+        cmd_clean(args.clean or ["all"], dry_run=dry, force=force)
         return
 
-    # Aucune action demandée
     if not any(getattr(args, f, False) for f in _ACTION_FLAGS):
         parser.print_help()
         return
@@ -1149,9 +1147,12 @@ def main() -> None:
             seed=args.seed,
             n_repeats=args.repeats,
             skip_audio=args.skip_audio,
-            force=args.force,
+            force=force,
             dry_run=dry,
         )
+
+    if args.lock:
+        cmd_lock(dry_run=dry)
 
     if args.validate:
         cmd_validate(dry_run=dry)
@@ -1163,7 +1164,7 @@ def main() -> None:
     # ── §4.2 Collecte ────────────────────────────────────────────────────────
     if args.serve:
         cmd_serve(dry_run=dry)
-        return  # bloquant — on s'arrête ici
+        return
 
     if args.sync:
         cmd_sync(dry_run=dry)

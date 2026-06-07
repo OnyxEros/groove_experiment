@@ -1,13 +1,10 @@
 """
-regression/data/loader.py  (v6.1)
+regression/data/loader.py  (v6.2)
 ==================================
-Fix : termes d'interaction calculés dans load_raw_responses
-      pour que le LMM les reçoive via df_raw.
-
-Les termes sont calculés sur les valeurs brutes (non normalisées)
-dans df_raw — la normalisation est faite ensuite dans lmm.py
-avant le calcul des produits croisés, conformément à l'ordre
-des opérations documenté dans lmm.py.
+Fix v6.2 :
+    - RT_MIN_S / RT_MAX_S importés depuis config.py (source unique).
+      Suppression des constantes locales qui pouvaient diverger silencieusement.
+    - Termes d'interaction calculés dans load_raw_responses pour le LMM.
 """
 
 from __future__ import annotations
@@ -19,7 +16,7 @@ import pandas as pd
 import numpy as np
 from pathlib import Path
 
-from config import METADATA_PATH, RT_MIN_S, RT_MAX_S
+from config import METADATA_PATH, RT_MIN_S, RT_MAX_S  # ← source unique
 from perception.loader import load_perceptual_dataset
 from perception.supabase_io import fetch_ratings
 from regression.data.features import (
@@ -97,13 +94,7 @@ def load_raw_responses(
 ) -> pd.DataFrame | None:
     """
     Réponses brutes (LMM).
-
-    Pour feature_set='interactions' : les colonnes D_sq, DxP, SxE, DxS
-    sont ajoutées à df_raw sur les valeurs BRUTES (non normalisées).
-    La normalisation + recalcul des produits croisés est faite dans lmm.py,
-    conformément à l'ordre des opérations : normaliser d'abord, croiser ensuite.
-    On passe ici un signal aux colonnes présentes — lmm.py les recompute
-    après normalisation via INTERACTION_TERMS.
+    RT_MIN_S / RT_MAX_S proviennent de config.py.
     """
     try:
         raw  = fetch_ratings(refresh=refresh)
@@ -133,9 +124,6 @@ def load_raw_responses(
     features_available = list(base_features)
 
     # ── Signalement des termes d'interaction pour le LMM ─────────────────────
-    # On ajoute les noms des termes demandés à features_available
-    # pour que lmm.py sache qu'il doit les calculer.
-    # Les colonnes réelles seront calculées par lmm.py après normalisation.
     interaction_requested = [
         t for t in INTERACTION_TERMS
         if t in candidates_list
@@ -144,6 +132,7 @@ def load_raw_responses(
         features_available += interaction_requested
         print(f"[loader] LMM : termes d'interaction demandés → {interaction_requested}")
 
+    # ── Filtre RT (seuils depuis config.py) ───────────────────────────────────
     if "rt" in df.columns:
         df = df[
             df["rt"].between(RT_MIN_S, RT_MAX_S, inclusive="both") | df["rt"].isna()
@@ -156,14 +145,10 @@ def load_raw_responses(
             df = df[~df["stim_id"].isin(single_stims)].copy()
             print(f"[loader] LMM exclude_single=True : {len(single_stims)} stimuli exclus")
 
-    # keep_cols : seulement les colonnes qui existent dans df
-    # (les termes d'interaction n'existent pas encore — calculés dans lmm.py)
     base_keep = ["groove", "participant_id", "stim_id"] + base_features
     df = _attach_musical_background(df, base_keep)
     df = df[[c for c in base_keep if c in df.columns]].dropna(subset=["groove"])
 
-    # On attache la liste complète des features (base + interactions)
-    # comme attribut pour que run.py puisse la passer au LMM
     df.attrs["features_requested"] = features_available
 
     return df
@@ -178,14 +163,6 @@ def _compute_interactions(
     features:   list[str],
     candidates: list[str],
 ) -> tuple[pd.DataFrame, list[str], np.ndarray]:
-    """
-    Calcule les termes d'interaction APRÈS normalisation.
-
-    D_sq = D_z²  (quadratique interprétable sur valeurs centrées-réduites)
-    DxP  = D_z × P_z
-    SxE  = S_z × E_z
-    DxS  = D_z × S_z
-    """
     df    = df.copy()
     added = []
 
@@ -207,7 +184,6 @@ def _compute_interactions(
 
 
 def _compute_m_reg(df: pd.DataFrame, context: str = "") -> pd.DataFrame:
-    """Calcule M_reg depuis la colonne 'hihat'."""
     import config as cfg
 
     tag = f"[loader{' / ' + context if context else ''}]"
@@ -316,7 +292,7 @@ def _normalize(X: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
 
 def describe_dataset(df: pd.DataFrame, features: list[str]) -> None:
     w = 50
-    print(f"\n{'─'*w}\n  Dataset régression (v6)\n{'─'*w}")
+    print(f"\n{'─'*w}\n  Dataset régression (v6.2)\n{'─'*w}")
     print(f"  Stimuli  : {len(df)}")
     print(f"  Features ({len(features):2d}) : {features}")
     print(f"{'─'*w}\n")

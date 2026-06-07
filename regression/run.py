@@ -1,18 +1,22 @@
 """
-regression/run.py  (v3)
-========================
+regression/run.py  (v3 — VERSION CORRIGÉE POLARITÉ PUSH/PULL)
+============================================================
 Point d'entrée du module de régression groove.
 
-Changements v3 :
-    - Fix LMM interactions : features_for_lmm depuis df_raw.attrs
-    - Comparaison AIC/BIC automatique quand feature_set='interactions' :
-      fit M0 (additif) vs M1 (avec interactions) en ML pour justification
-      formelle de l'inclusion des termes croisés (Burnham & Anderson 2002).
+Modifications de polarité :
+    Rétablit le sens physique standard pour le désalignement (P / P_mv) :
+    P > 0  →  Rushing (Avance temporelle du hi-hat)
+    P < 0  →  Laid-back (Retard temporel du hi-hat)
+    
+    Le correctif multiplie par -1 les colonnes associées à P et P_mv ainsi
+    que leurs interactions directes (D_x_P) dès la phase post-chargement 
+    afin de protéger l'intégrité des modèles (Ridge, ElasticNet, LMM).
 """
 
 from __future__ import annotations
 
 import numpy as np
+import pandas as pd
 from pathlib import Path
 
 from regression.data.loader   import load_aggregated, load_raw_responses, describe_dataset
@@ -49,6 +53,15 @@ def run_regression(
         normalize=normalize,
         exclude_single=exclude_single,
     )
+
+    # =========================================================================
+    # CORRECTIF DE POLARITÉ (DONNÉES AGRÉGÉES)
+    # =========================================================================
+    # Redressement de l'axe P (Désalignement) pour contrer l'inversion du générateur
+    from config import apply_polarity_fix_array
+    X = apply_polarity_fix_array(X, features)
+    # =========================================================================
+
     describe_dataset(df, features)
 
     if len(df) < 10:
@@ -60,6 +73,16 @@ def run_regression(
         refresh=False,
         exclude_single=exclude_single,
     )
+
+    # =========================================================================
+    # CORRECTIF DE POLARITÉ (DONNÉES BRUTES LMM)
+    # =========================================================================
+    # Le modèle Linéaire à Effets Mixtes utilise directement le DataFrame df_raw.
+    # Nous inversons les signes à la racine pour conserver l'isomorphisme mathématique.
+    if df_raw is not None:
+        from config import apply_polarity_fix_df
+        df_raw = apply_polarity_fix_df(df_raw)
+    # =========================================================================
 
     # Features pour le LMM : base + noms des termes d'interaction
     if df_raw is not None and "features_requested" in df_raw.attrs:

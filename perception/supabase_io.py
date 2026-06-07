@@ -4,46 +4,21 @@ perception/supabase_io.py
 Fetch et cache local des réponses perceptives depuis Supabase.
 
 Corrections :
-    B1 — RT_MIN abaissé de 4.0s à 1.5s.
-         Justification : la durée du stimulus est ~6.7s à 90bpm (6 mesures × 16th).
-         Un participant attentif peut répondre dès 1.5s d'écoute.
-         4.0s filtrait ~15% des réponses rapides légitimes, introduisant
-         un biais de sélection (les répondants lents sont sur-représentés).
-         Référence : Madison (2006) utilise un seuil de 1s pour des stimuli
-         rythmiques de durée comparable.
-
+    B1 — RT_MIN abaissé de 4.0s à 1.5s (défini dans config.py — source unique).
     B3 — Filtre listen_duration ajouté.
-         Un participant ayant listenDuration < LISTEN_MIN_S (1.5s) n'a pas
-         pu percevoir le groove de façon fiable. Ces réponses sont marquées
-         comme "skipped" et exclues de l'analyse, mais conservées dans le
-         cache pour transparence.
-
-    I2 — Détection des participants "spammeurs".
-         Un participant dont la médiane RT < SPAM_MEDIAN_RT_S (2.5s) sur
-         l'ensemble de ses réponses est signalé dans les logs.
-         AUCUNE exclusion automatique : la décision reste au chercheur,
-         qui doit la justifier dans le mémoire.
-         Seuil choisi : 2.5s = RT_MIN_S + 1s de marge,
-         en deçà duquel une écoute attentive de 6.7s est physiquement impossible.
+    I2 — Détection des participants "spammeurs" (warning uniquement).
 """
 
 import pandas as pd
 from pathlib import Path
 
 from infra.supabase_client import fetch_responses
-from config import RESP_FILE
-
-# ── Seuils de filtrage RT ─────────────────────────────────
-# B1 : RT_MIN abaissé de 4.0 → 1.5s
-RT_MIN_S = 1.5
-RT_MAX_S = 600.0
+from config import RESP_FILE, RT_MIN_S, RT_MAX_S  # ← source unique, plus de duplication
 
 # ── Seuil d'écoute minimale (B3) ─────────────────────────
 LISTEN_MIN_S = 1.5
 
 # ── Seuil de détection spammeurs (I2) ────────────────────
-# Médiane RT par participant en dessous de laquelle on émet un warning.
-# Pas d'exclusion automatique — décision au chercheur.
 SPAM_MEDIAN_RT_S = 2.5
 
 
@@ -89,7 +64,7 @@ def _validate(df: pd.DataFrame) -> pd.DataFrame:
     Filtres appliqués dans l'ordre :
         1. Colonnes obligatoires présentes
         2. Types numériques corrects
-        3. RT hors plage [RT_MIN_S, RT_MAX_S]       (B1 : MIN = 1.5s)
+        3. RT hors plage [RT_MIN_S, RT_MAX_S]       (B1 : seuils depuis config.py)
         4. listen_duration < LISTEN_MIN_S            (B3 : écoute insuffisante)
         5. Détection spammeurs (médiane RT par part.) (I2 : warning uniquement)
     """
@@ -114,7 +89,7 @@ def _validate(df: pd.DataFrame) -> pd.DataFrame:
 
     df = df.dropna(subset=["groove"])
 
-    # ── B1 : Filtre RT ────────────────────────────────────
+    # ── B1 : Filtre RT (seuils depuis config.py) ──────────
     if "rt" in df.columns:
         before = len(df)
         df = df[
@@ -144,8 +119,6 @@ def _validate(df: pd.DataFrame) -> pd.DataFrame:
             )
 
     # ── I2 : Détection spammeurs ──────────────────────────
-    # Warning uniquement — AUCUNE exclusion automatique.
-    # La décision d'exclure un participant doit être justifiée dans le mémoire.
     if "rt" in df.columns and "participant_id" in df.columns:
         _warn_spammers(df)
 
@@ -155,15 +128,7 @@ def _validate(df: pd.DataFrame) -> pd.DataFrame:
 def _warn_spammers(df: pd.DataFrame) -> None:
     """
     Identifie les participants dont la médiane RT est suspicieusement basse.
-
-    Seuil : SPAM_MEDIAN_RT_S (2.5s).
-    Justification : un stimulus dure ~6.7s ; une médiane RT < 2.5s indique
-    qu'en moyenne le participant répond avant d'avoir pu écouter plus d'un tiers
-    du stimulus — comportement incompatible avec un jugement perceptif fiable.
-
-    Émet uniquement un warning dans les logs — aucune donnée n'est supprimée.
-    Si des participants doivent être exclus, ajouter leurs IDs à
-    EXCLUDED_PARTICIPANTS dans config.py et re-lancer avec --refresh.
+    Warning uniquement — aucune donnée n'est supprimée.
     """
     rt_valid = df.dropna(subset=["rt", "participant_id"])
     if rt_valid.empty:

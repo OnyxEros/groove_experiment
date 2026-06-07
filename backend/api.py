@@ -17,7 +17,7 @@ from fastapi.staticfiles import StaticFiles
 from config import MP3_DIR, METADATA_PATH, INDEX_PATH
 from backend.models import Response
 from backend.startup import check_environment
-from infra.supabase_client import insert_response
+from infra.supabase_client import insert_response, fetch_responses
 
 try:
     from backend.design.registry import StimulusRegistry
@@ -96,10 +96,6 @@ async def lifespan(app: FastAPI):
 
     print(f"✅ {len(app.state.valid_stim_ids)} stim_id valides chargés")
 
-    # Exemple de familiarisation pré-calculé au démarrage.
-    # Critère : condition centrale du design (S_mv=1, D_mv=1, E_mv=0.5).
-    # Aucune valence communiquée au participant — juste "voici à quoi
-    # ressemble un extrait, voici comment fonctionne l'interface".
     app.state.example_familiarization = _pick_familiarization_example(df)
     ex = app.state.example_familiarization
     print(
@@ -138,7 +134,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="Groove Study API",
-    version="2.4.0",
+    version="2.5.0",
     lifespan=lifespan,
 )
 
@@ -155,28 +151,6 @@ def _client_ip(request: Request) -> str:
 
 
 def _pick_familiarization_example(df: pd.DataFrame) -> pd.Series:
-    """
-    Sélectionne un stimulus de familiarisation neutre.
-
-    Objectif : permettre au participant de s'accoutumer au format audio
-    et à l'interface SANS ancrer les extrêmes de l'échelle groove.
-    Le stimulus doit être "typique" du pool — ni particulièrement groovy
-    ni particulièrement mécanique.
-
-    Stratégie (par priorité décroissante) :
-        1. S_mv=1 & D_mv=1 & E_mv=0.5   condition centrale du design 3³,
-                                          n≈46/128 dans ce dataset.
-                                          Syncopation mixte, densité moyenne,
-                                          micro-timing modéré.
-        2. S_mv=1 & D_mv=1              centrale sans contrainte sur E_mv
-        3. S_mv=1                        syncopation médiane
-        4. stimulus dont S réalisé est   fallback pur sur les données
-           le plus proche de la médiane
-
-    Tiebreak : parmi les candidats d'un niveau, on prend celui dont S
-    réalisé est le plus proche de la médiane globale de S — assure un
-    stimulus "au milieu du pool" même s'il y a plusieurs candidats.
-    """
     has_design = {"S_mv", "D_mv", "E_mv"}.issubset(df.columns)
     s_median   = df["S"].median() if "S" in df.columns else None
 
@@ -199,7 +173,6 @@ def _pick_familiarization_example(df: pd.DataFrame) -> pd.Series:
             candidates = candidates.sort_values("_dist")
         return candidates.iloc[0]
 
-    # Fallback final : stimulus le plus proche de la médiane de S
     if s_median is not None:
         idx = (df["S"] - s_median).abs().idxmin()
         return df.loc[idx]
@@ -270,6 +243,74 @@ async def health(request: Request):
     }
 
 
+@app.get("/progress", tags=["experiment"])
+async def get_progress(request: Request):
+    """
+    Tableau de bord de progression de la campagne.
+
+    Retourne :
+        n_responses          — nombre total de réponses enregistrées
+        n_participants       — participants uniques
+        n_stimuli_covered    — stimuli ayant au moins 1 réponse
+        n_stimuli_total      — total des stimuli dans le pool
+        coverage_pct         — % de stimuli couverts
+        stimuli_min_2        — stimuli avec >= 2 réponses (seuil analyse)
+        stimuli_min_2_pct    — % correspondant
+        groove_mean          — moyenne globale du groove (indicatif)
+        groove_std           — écart-type global
+        last_response_at     — timestamp de la dernière réponse
+        responses_per_stim   — distribution : min / median / max réponses par stimulus
+    """
+    await _check_rate_limit(_client_ip(request))
+
+    try:
+        data = fetch_responses()
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"Supabase indisponible : {e}")
+
+    n_total = len(app.state.df_global)
+
+    if not data:
+        return {
+            "n_responses":       0,
+            "n_participants":    0,
+            "n_stimuli_covered": 0,
+            "n_stimuli_total":   n_total,
+            "coverage_pct":      0.0,
+            "stimuli_min_2":     0,
+            "stimuli_min_2_pct": 0.0,
+            "groove_mean":       None,
+            "groove_std":        None,
+            "last_response_at":  None,
+            "responses_per_stim": {"min": 0, "median": 0, "max": 0},
+        }
+
+    df = pd.DataFrame(data)
+    df["groove"] = pd.to_numeric(df["groove"], errors="coerce")
+
+    counts_per_stim = df.groupby("stim_id").size()
+    n_covered       = int(counts_per_stim.gt(0).sum())
+    n_min2          = int(counts_per_stim.ge(2).sum())
+
+    return {
+        "n_responses":       int(len(df)),
+        "n_participants":    int(df["participant_id"].nunique()) if "participant_id" in df.columns else None,
+        "n_stimuli_covered": n_covered,
+        "n_stimuli_total":   n_total,
+        "coverage_pct":      round(n_covered / n_total * 100, 1) if n_total > 0 else 0.0,
+        "stimuli_min_2":     n_min2,
+        "stimuli_min_2_pct": round(n_min2 / n_total * 100, 1) if n_total > 0 else 0.0,
+        "groove_mean":       round(float(df["groove"].mean()), 3) if df["groove"].notna().any() else None,
+        "groove_std":        round(float(df["groove"].std()), 3)  if df["groove"].notna().any() else None,
+        "last_response_at":  df["created_at"].max() if "created_at" in df.columns else None,
+        "responses_per_stim": {
+            "min":    int(counts_per_stim.min()),
+            "median": float(counts_per_stim.median()),
+            "max":    int(counts_per_stim.max()),
+        },
+    }
+
+
 @app.get("/new_participant", tags=["session"])
 async def new_participant(request: Request):
     await _check_rate_limit(_client_ip(request))
@@ -300,17 +341,7 @@ async def get_stimuli(
 
 @app.get("/example", tags=["experiment"])
 async def get_example(request: Request):
-    """
-    Retourne le stimulus de familiarisation (pré-calculé au démarrage).
-
-    Stimulus intentionnellement neutre : condition centrale du design
-    (S_mv=1, D_mv=1, E_mv=0.5), représentatif du pool sans être
-    remarquable dans aucune direction.
-
-    Aucune valence n'est communiquée au participant côté interface :
-    l'exemple sert uniquement à se familiariser avec le format audio
-    et les curseurs, pas à ancrer les extrêmes de l'échelle.
-    """
+    """Retourne le stimulus de familiarisation (pré-calculé au démarrage)."""
     await _check_rate_limit(_client_ip(request))
     return _example_response(app.state.example_familiarization)
 
