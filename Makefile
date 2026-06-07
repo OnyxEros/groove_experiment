@@ -12,7 +12,7 @@ PYTHON         ?= python
 SEED           ?= 42
 REPEATS        ?=
 EXCLUDE_SINGLE ?= 1
-FEATURE_SET    ?= all
+FEATURE_SET    ?= acoustic
 ANALYSIS_MODE  ?= groove
 FIGURES_OUT    ?= figures_memoire
 PORT           ?= 8000
@@ -36,7 +36,7 @@ IN_VENV := $(if $(VIRTUAL_ENV),1,0)
         generate regenerate lock validate preview \
         serve sync sync-refresh \
         new-run analysis new-run-analysis \
-        regression regression-all regression-interactions \
+        regression regression-all \
         perception perc-space \
         thesis figures \
         status doctor dry-generate dry-thesis \
@@ -64,6 +64,7 @@ help: ## Affiche ce menu d'aide
 	@echo "  Variables :  SEED=$(SEED)  FEATURE_SET=$(FEATURE_SET)  FORCE=$(FORCE)"
 	@echo "               EXCLUDE_SINGLE=$(EXCLUDE_SINGLE)  PORT=$(PORT)"
 	@echo "               ANALYSIS_MODE=$(ANALYSIS_MODE)  REFRESH=$(REFRESH)"
+	@echo "  Note : FEATURE_SET=acoustic par défaut (Ridge + ElasticNet + LMM)"
 	@echo ""
 
 # ============================================================
@@ -132,7 +133,7 @@ new-run-analysis: _require-metadata ## Crée un run ET lance l'analyse immédiat
 ##@ §6  Modélisation statistique
 # ============================================================
 
-regression: _require-responses ## Régression groove  (FEATURE_SET=all par défaut)
+regression: _require-responses ## Régression groove  (FEATURE_SET=acoustic par défaut)
 	@echo "📈  §6.2  Régression  (features=$(FEATURE_SET))…"
 	$(PYTHON) cli.py --regression \
 		--feature-set $(FEATURE_SET) \
@@ -140,18 +141,11 @@ regression: _require-responses ## Régression groove  (FEATURE_SET=all par défa
 		$(_REFRESH_FLAG) \
 		--no-check-db
 
-regression-all: _require-responses ## Régression sur design + acoustic + all
-	@echo "📈  §6.2  Régression complète…"
+regression-all: _require-responses ## Régression acoustic (Ridge + ElasticNet + LMM — version mémoire)
+	@echo "📈  §6.2  Régression acoustic (version mémoire)…"
 	$(PYTHON) cli.py --regression-all \
 		$(_SINGLE_FLAG) \
 		$(_REFRESH_FLAG) \
-		--no-check-db
-
-regression-interactions: _require-responses ## Régression avec termes croisés  (D², D×P, S×E, D×S)
-	@echo "📈  §6.2  Régression interactions…"
-	$(PYTHON) cli.py --regression \
-		--feature-set interactions \
-		$(_SINGLE_FLAG) \
 		--no-check-db
 
 perception: _require-responses _require-run ## Alignement Ridge : espace latent → groove_mean
@@ -199,7 +193,7 @@ env-check: ## Vérifie fluidsynth, ffmpeg, soundfont
 dry-generate: ## Simule --generate sans rien écrire
 	$(PYTHON) cli.py --generate --dry-run --seed $(SEED) $(_REPEATS_FLAG)
 
-dry-thesis: ## Simule --thesis sans rien écrire
+dry-thesis: ## Simule --thesis sans rien écrire  (sync → analysis → regression acoustic → perception → figures)
 	$(PYTHON) cli.py --thesis --dry-run $(_SINGLE_FLAG)
 
 # ============================================================
@@ -228,7 +222,7 @@ clean-cache: ## Supprime __pycache__ et les .pyc
 setup-experiment: generate lock validate ## §4 complet : génère + verrouille + valide
 	@echo "✔  §4 prêt — lancez 'make serve' pour démarrer l'interface."
 
-model: analysis regression-all perception perc-space figures ## §5–§6 complet depuis cache
+model: analysis regression-all perception figures ## §5–§6 complet depuis cache
 	@echo "✔  §5–§6 terminés."
 
 # ============================================================

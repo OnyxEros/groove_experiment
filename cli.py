@@ -760,14 +760,14 @@ def cmd_regression_all(
     exclude_single: bool = True,
     dry_run:        bool = False,
 ) -> None:
-    for fs in ("design", "acoustic", "all"):
-        cmd_regression(
-            feature_set=fs,
-            refresh=(refresh and fs == "design"),
-            check_db=(check_db and fs == "design"),
-            exclude_single=exclude_single,
-            dry_run=dry_run,
-        )
+    """Version mémoire : feature set acoustic uniquement (D, I, V, S, E, P)."""
+    cmd_regression(
+        feature_set="acoustic",
+        refresh=refresh,
+        check_db=check_db,
+        exclude_single=exclude_single,
+        dry_run=dry_run,
+    )
 
 
 # =========================================================
@@ -907,8 +907,8 @@ def cmd_thesis(
 ) -> None:
     if dry_run:
         _print("📖  [DRY-RUN] Pipeline thèse — séquence complète")
-        for cmd in ["sync", "new-run", "analysis (mode=groove)", "regression-all",
-                    "perception", "perc-space", "figures"]:
+        for cmd in ["sync", "new-run", "analysis (mode=groove)",
+                    "regression (acoustic)", "perception", "figures"]:
             _info(f"  → {cmd}")
         return
 
@@ -917,10 +917,16 @@ def cmd_thesis(
     cmd_sync(dry_run=False)
     cmd_new_run()
     cmd_analysis(mode="groove", dry_run=False)
-    cmd_regression_all(refresh=False, check_db=False,
-                       exclude_single=exclude_single, dry_run=False)
+    # Régression : feature set acoustic uniquement (D, I, V, S, E, P)
+    # Ridge + ElasticNet + LMM — justifié par l'ACP (espace réduit validé §5)
+    cmd_regression(
+        feature_set="acoustic",
+        refresh=False,
+        check_db=False,
+        exclude_single=exclude_single,
+        dry_run=False,
+    )
     cmd_perception(refresh=False, dry_run=False)
-    cmd_perception_space(refresh=False, dry_run=False)
     cmd_figures(out="figures_memoire", dry_run=False)
 
     _print("📖  Pipeline du mémoire terminé", style="bold green")
@@ -973,9 +979,8 @@ def build_parser() -> argparse.ArgumentParser:
    python cli.py --analysis                    → embeddings + UMAP + clusters
 
  §6    Modélisation statistique
-   python cli.py --regression-all --refresh    → Ridge · EN · SVR · RF · LMM
+   python cli.py --regression --refresh        → Ridge · ElasticNet · LMM (acoustic)
    python cli.py --perception --refresh        → alignement Ridge
-   python cli.py --perc-space                  → ICC · Mantel · géométrie
 
  Pipeline complet
    python cli.py --thesis                      → sync + analysis + modèles + figures
@@ -1048,13 +1053,13 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("--regression",     action="store_true",
                    help="Régression groove (1 feature set)")
     g.add_argument("--regression-all", action="store_true",
-                   help="Régression groove (design + acoustic + all)")
+                   help="Régression groove (feature set acoustic — version mémoire)")
     g.add_argument(
         "--feature-set",
-        default="all",
+        default="acoustic",
         choices=["design", "acoustic", "all", "interactions", "predictability"],
         metavar="FS",
-        help="Feature set pour --regression (défaut : all)",
+        help="Feature set pour --regression (défaut : acoustic)",
     )
     g.add_argument(
         "--include-single",
