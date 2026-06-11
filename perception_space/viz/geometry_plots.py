@@ -117,10 +117,3 @@ def plot_permutation_test(perm_result: dict, out_path: Path | None = None) -> pl
     
     _save_figure(fig, out_path)
     return fig
-
-# =========================================================
-# FIGURE 3 — Paramètres génératifs
-# =========================================================
-
-# (J'ai laissé la structure de `plot_condition_stats` telle quelle, 
-# assure-toi juste d'appeler `apply_thesis_style()` au début comme ci-dessus)

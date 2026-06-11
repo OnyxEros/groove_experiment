@@ -1,6 +1,6 @@
 """
-regression/viz/figures.py  (v4 — VERSION MÉMOIRE)
-===================================================
+regression/viz/figures.py  (v4.1 — VERSION MÉMOIRE + LOGS COMPLETS)
+=====================================================================
 
 Figures produites :
     fig3  — Heatmap D_mv × P_mv (valeurs originales du design)
@@ -9,13 +9,13 @@ Figures produites :
     fig10 — Forest plot LMM avec intervalles de confiance à 95%
     fig11 — Scatter groove observé vs prédit (Ridge, ElasticNet, OOF)
 
-Supprimées en v4 :
-    fig12 — Effets marginaux D×P et D×S (nécessitait feature_set=interactions)
-    fig13 — Résidus LMM (diagnostic utile mais non essentiel pour le mémoire)
+v4.1 : ajout de logs console détaillés pour chaque figure —
+       toutes les valeurs numériques représentées sont tracées avant sauvegarde.
 """
 
 from __future__ import annotations
 
+import math
 import warnings
 import numpy as np
 import pandas as pd
@@ -77,6 +77,15 @@ def _save(fig, path, verbose):
     if verbose:
         print(f"  [fig] {path.name}")
 
+def _sep(char="─", w=72):
+    return char * w
+
+def _fmt(v, d=3, plus=False):
+    if isinstance(v, float) and (math.isnan(v) or not math.isfinite(v)):
+        return "nan"
+    fmt_str = f"+.{d}f" if plus else f".{d}f"
+    return f"{v:{fmt_str}}"
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # FIG 3 — Heatmap D_mv × P_mv
@@ -111,7 +120,73 @@ def fig3_interaction_heatmap(df, out_dir, verbose=False):
     means  = df2.groupby(["_D", "_P"])["groove_mean"].mean()
     counts = df2.groupby(["_D", "_P"])["groove_mean"].count()
 
-    g_min, g_max = means.min(), means.max()
+    # ── LOG fig3 ──────────────────────────────────────────────────────────────
+    g_min_val, g_max_val = means.min(), means.max()
+    print(f"\n  {_sep()}")
+    print(f"  [fig3] Heatmap D_mv × P_mv — valeurs représentées")
+    print(f"  {_sep()}")
+    print(f"  Cellules : {len(d_vals)} × {len(p_vals)} = {len(d_vals)*len(p_vals)} | "
+          f"groove_mean range : [{_fmt(g_min_val)} – {_fmt(g_max_val)}]")
+    print()
+
+    p_lbl_log = {-1: "Laidback (-1)", 0: "Grid (0)", 1: "Push (+1)"}
+    d_lbl_log = {0: "Faible (0)", 1: "Moyenne (1)", 2: "Forte (2)"}
+
+    # En-tête colonnes
+    header_cols = "  ".join(f"{p_lbl_log.get(pv, str(pv)):>16}" for pv in p_vals)
+    axis_label = 'D_mv \\ P_mv'
+    print(f"  {axis_label:<16}  {header_cols}")
+    print(f"  {_sep('─', 70)}")
+
+    for dv in d_vals:
+        row_parts = []
+        for pv in p_vals:
+            val = means.get((dv, pv), float("nan"))
+            n_c = counts.get((dv, pv), 0)
+            if math.isnan(val):
+                row_parts.append(f"{'n/a':>16}")
+            else:
+                row_parts.append(f"{_fmt(val)} (n={n_c:2d})".rjust(16))
+        print(f"  {d_lbl_log.get(dv, str(dv)):<16}  {'  '.join(row_parts)}")
+
+    print()
+    # Effets marginaux
+    print(f"  Effets marginaux — D_mv (moyenné sur P_mv) :")
+    for dv in d_vals:
+        vals_d = [means.get((dv, pv), float("nan")) for pv in p_vals]
+        vals_d = [v for v in vals_d if not math.isnan(v)]
+        if vals_d:
+            print(f"    D_mv={dv}  μ={_fmt(np.mean(vals_d))}  "
+                  f"[{_fmt(min(vals_d))} – {_fmt(max(vals_d))}]")
+
+    print()
+    print(f"  Effets marginaux — P_mv (moyenné sur D_mv) :")
+    for pv in p_vals:
+        vals_p = [means.get((dv, pv), float("nan")) for dv in d_vals]
+        vals_p = [v for v in vals_p if not math.isnan(v)]
+        if vals_p:
+            print(f"    P_mv={pv:+d}  μ={_fmt(np.mean(vals_p))}  "
+                  f"[{_fmt(min(vals_p))} – {_fmt(max(vals_p))}]")
+
+    # Basculement polarité : comparaison push/laidback à D faible vs fort
+    if -1 in d_vals or 0 in d_vals:
+        d_low  = min(d_vals)
+        d_high = max(d_vals)
+        for p_low_key, p_high_key in [(-1, 1)]:
+            v_ll = means.get((d_low,  p_low_key),  float("nan"))
+            v_lh = means.get((d_low,  p_high_key), float("nan"))
+            v_hl = means.get((d_high, p_low_key),  float("nan"))
+            v_hh = means.get((d_high, p_high_key), float("nan"))
+            if not any(math.isnan(x) for x in [v_ll, v_lh, v_hl, v_hh]):
+                print()
+                print(f"  Interaction D_mv×P_mv (laid-back vs push) :")
+                print(f"    D faible  : laid-back={_fmt(v_ll)}  push={_fmt(v_lh)}  Δ={_fmt(v_ll-v_lh, plus=True)}")
+                print(f"    D forte   : laid-back={_fmt(v_hl)}  push={_fmt(v_hh)}  Δ={_fmt(v_hl-v_hh, plus=True)}")
+
+    print(f"  {_sep()}")
+    # ── fin LOG ───────────────────────────────────────────────────────────────
+
+    g_min, g_max = g_min_val, g_max_val
     g_range = g_max - g_min + 1e-9
 
     nd, np_ = len(d_vals), len(p_vals)
@@ -212,6 +287,36 @@ def fig8_model_comparison(results, out_dir, verbose=False):
     if not names:
         return
 
+    # ── LOG fig8 ──────────────────────────────────────────────────────────────
+    print(f"\n  {_sep()}")
+    print(f"  [fig8] Comparaison modèles — valeurs représentées")
+    print(f"  {_sep()}")
+    print(f"  {'Modèle':<16}  {'R²':>8}  {'MAE':>8}  {'Type':<22}  Note")
+    print(f"  {_sep('─', 70)}")
+
+    for nm in model_order:
+        res = results.get(nm)
+        if res is None:
+            continue
+        is_lmm = res.get("_is_lmm", False)
+        if is_lmm:
+            r2_val  = res.get("r2_marginal",    float("nan"))
+            r2c_val = res.get("r2_conditional", float("nan"))
+            mae_val = res.get("mae_in_sample",  float("nan"))
+            typ     = "R²_marg in-sample"
+            note    = f"R²_cond={_fmt(r2c_val)}"
+        else:
+            r2_val  = res.get("r2_cv_mean",  float("nan"))
+            r2_std  = res.get("r2_cv_std",   float("nan"))
+            mae_val = res.get("mae_cv_mean", float("nan"))
+            mae_std = res.get("mae_cv_std",  float("nan"))
+            typ     = "CV 5-fold"
+            note    = f"±{_fmt(r2_std)} R² | ±{_fmt(mae_std)} MAE"
+        print(f"  {nm:<16}  {_fmt(r2_val):>8}  {_fmt(mae_val):>8}  {typ:<22}  {note}")
+
+    print(f"  {_sep()}")
+    # ── fin LOG ───────────────────────────────────────────────────────────────
+
     x = np.arange(len(names))
     w = 0.30
 
@@ -285,6 +390,46 @@ def fig9_elasticnet_selection(results, features, out_dir, verbose=False):
     en_vals    = np.array([en_coefs.get(f, 0)    for f in order])
     en_zero    = np.abs(en_vals) < 1e-6
 
+    # ── LOG fig9 ──────────────────────────────────────────────────────────────
+    alpha_en = en_res.get("alpha",    float("nan"))
+    l1_ratio = en_res.get("l1_ratio", float("nan"))
+    n_sel    = int(np.sum(~en_zero))
+    n_tot    = len(order)
+
+    print(f"\n  {_sep()}")
+    print(f"  [fig9] Sélection ElasticNet vs Ridge — coefficients β standardisés")
+    print(f"  {_sep()}")
+    print(f"  ElasticNet : α={_fmt(alpha_en, 4)}  l1_ratio={_fmt(l1_ratio, 2)}  "
+          f"features retenues : {n_sel}/{n_tot}")
+    print()
+    print(f"  {'Feature':<20}  {'β Ridge':>10}  {'β EN':>10}  {'Statut EN':<18}  "
+          f"{'|β| Ridge':>10}")
+    print(f"  {_sep('─', 72)}")
+
+    for feat, rv, ev, ez in zip(order, ridge_vals, en_vals, en_zero):
+        statut = "éliminée (β=0)" if ez else "retenue"
+        flag   = "  ←" if not ez and abs(rv) == max(abs(ridge_vals)) else ""
+        print(f"  {_fl(feat):<20}  {rv:>+10.4f}  {ev:>+10.4f}  {statut:<18}  "
+              f"{abs(rv):>10.4f}{flag}")
+
+    print()
+    retained  = [order[i] for i in range(n_tot) if not en_zero[i]]
+    eliminated = [order[i] for i in range(n_tot) if en_zero[i]]
+    print(f"  Retenues   ({len(retained)}) : {retained}")
+    print(f"  Éliminées  ({len(eliminated)}) : {eliminated}")
+
+    # Convergence Ridge ∩ LMM significatifs
+    lmm_coefs = results.get("LMM", {}).get("coefs", {})
+    if lmm_coefs:
+        lmm_sig = [k for k, v in lmm_coefs.items()
+                   if v.get("p_value", 1) < 0.05 and not v.get("is_background")]
+        robust  = [f for f in retained if f in lmm_sig]
+        print()
+        print(f"  Convergence EN retenues ∩ LMM sig. (p<0.05) : {robust}")
+
+    print(f"  {_sep()}")
+    # ── fin LOG ───────────────────────────────────────────────────────────────
+
     n, h = len(order), 0.30
 
     fig, ax = plt.subplots(figsize=(10, max(5, n * 0.55 + 2)))
@@ -310,9 +455,6 @@ def fig9_elasticnet_selection(results, features, out_dir, verbose=False):
     ax.set_ylim(-0.7, n - 0.3)
     ax.grid(axis="x", alpha=0.2, linestyle=":", zorder=0)
 
-    n_sel    = int(en_res.get("n_selected", int(np.sum(~en_zero))))
-    alpha_en = en_res.get("alpha", float("nan"))
-    l1_ratio = en_res.get("l1_ratio", float("nan"))
     ax.set_title(
         f"Sélection de features — Ridge vs ElasticNet\n"
         f"ElasticNet : α={alpha_en:.4f}, l1_ratio={l1_ratio:.2f}, {n_sel}/{n} features retenues",
@@ -356,6 +498,63 @@ def fig10_forest_plot_lmm(results, out_dir, verbose=False):
 
     main_items = sorted(main_items, key=lambda x: abs(x[1]["coef"]), reverse=True)
     bg_items   = sorted(bg_items,   key=lambda x: abs(x[1]["coef"]), reverse=True)
+
+    # ── LOG fig10 ─────────────────────────────────────────────────────────────
+    r2m  = lmm_res.get("r2_marginal",    float("nan"))
+    r2c  = lmm_res.get("r2_conditional", float("nan"))
+    icc  = lmm_res.get("icc_participant", float("nan"))
+    n_ob = lmm_res.get("n_obs", "?")
+    n_pp = lmm_res.get("n_participants", "?")
+
+    print(f"\n  {_sep()}")
+    print(f"  [fig10] Forest plot LMM — coefficients représentés")
+    print(f"  {_sep()}")
+    print(f"  n={n_ob} obs, {n_pp} participants | "
+          f"R²_marg={_fmt(r2m)}  R²_cond={_fmt(r2c)}  ICC={_fmt(icc)}")
+    print()
+    print(f"  ── Effets principaux ──")
+    print(f"  {'Prédicteur':<20}  {'β':>8}  {'SE':>6}  {'z':>7}  {'p':>8}  "
+          f"{'Sig':>4}  {'IC 95%':<26}  Statut")
+    print(f"  {_sep('─', 78)}")
+
+    for name, v in main_items:
+        coef  = v.get("coef",    float("nan"))
+        se    = v.get("se",      float("nan"))
+        z     = v.get("z",       float("nan"))
+        pval  = v.get("p_value", float("nan"))
+        ci_lo = v.get("ci_low",  float("nan"))
+        ci_hi = v.get("ci_high", float("nan"))
+        sig   = "★" if pval < 0.05 else "ns"
+        ci_s  = f"[{_fmt(ci_lo)}, {_fmt(ci_hi)}]"
+        print(f"  {_fl(name):<20}  {coef:>+8.3f}  {se:>6.3f}  {z:>7.2f}  "
+              f"{pval:>8.3f}  {sig:>4}  {ci_s:<26}  "
+              f"{'SIGNIFICATIF' if pval < 0.05 else ''}")
+
+    if bg_items:
+        print()
+        print(f"  ── Bagage musical (réf. = non-musicien) ──")
+        print(f"  {'Niveau':<20}  {'β':>8}  {'SE':>6}  {'z':>7}  {'p':>8}  {'Sig':>4}  IC 95%")
+        print(f"  {_sep('─', 70)}")
+        for name, v in bg_items:
+            coef  = v.get("coef",    float("nan"))
+            se    = v.get("se",      float("nan"))
+            z     = v.get("z",       float("nan"))
+            pval  = v.get("p_value", float("nan"))
+            ci_lo = v.get("ci_low",  float("nan"))
+            ci_hi = v.get("ci_high", float("nan"))
+            sig   = "★" if pval < 0.05 else "ns"
+            ci_s  = f"[{_fmt(ci_lo)}, {_fmt(ci_hi)}]"
+            print(f"  {_fl(name):<20}  {coef:>+8.3f}  {se:>6.3f}  {z:>7.2f}  "
+                  f"{pval:>8.3f}  {sig:>4}  {ci_s}")
+
+    # Synthèse significativité
+    sig_main = [(n, v) for n, v in main_items if v.get("p_value", 1) < 0.05]
+    ns_main  = [(n, v) for n, v in main_items if v.get("p_value", 1) >= 0.05]
+    print()
+    print(f"  Significatifs (p<0.05) : {[n for n,_ in sig_main]}")
+    print(f"  Non-significatifs      : {[n for n,_ in ns_main]}")
+    print(f"  {_sep()}")
+    # ── fin LOG ───────────────────────────────────────────────────────────────
 
     groups = [
         ("Effets principaux", main_items, BLUE),
@@ -418,15 +617,9 @@ def fig10_forest_plot_lmm(results, out_dir, verbose=False):
     ax.grid(axis="x", alpha=0.2, linestyle=":", zorder=0)
     ax.invert_yaxis()
 
-    r2m  = lmm_res.get("r2_marginal",    float("nan"))
-    r2c  = lmm_res.get("r2_conditional", float("nan"))
-    icc  = lmm_res.get("icc_participant", float("nan"))
-    n_ob = lmm_res.get("n_obs", "?")
-    n_pp = lmm_res.get("n_participants", "?")
-
     stats_txt = (
         f"LMM (REML)  ·  n={n_ob} obs, {n_pp} participants  ·  "
-        f"R²_marg={r2m:.3f}  ·  R²_cond={r2c:.3f}  ·  ICC={icc:.3f}"
+        f"R²_marg={_fmt(r2m)}  ·  R²_cond={_fmt(r2c)}  ·  ICC={_fmt(icc)}"
     )
     ax.set_title("Coefficients du Modèle Linéaire Mixte (IC 95%)",
                  pad=12, fontsize=13, fontweight="bold")
@@ -460,13 +653,61 @@ def fig11_observed_vs_predicted(results, y_true, out_dir, verbose=False):
             print("  [fig11] y_pred_oof absent — ignorée")
         return
 
+    y_arr = np.array(y_true)
+
+    # ── LOG fig11 ─────────────────────────────────────────────────────────────
+    print(f"\n  {_sep()}")
+    print(f"  [fig11] Scatter observé vs prédit (OOF) — métriques représentées")
+    print(f"  {_sep()}")
+    print(f"  n stimuli : {len(y_arr)}  |  "
+          f"groove observé : μ={_fmt(float(np.mean(y_arr)))}  "
+          f"σ={_fmt(float(np.std(y_arr)))}  "
+          f"[{_fmt(float(y_arr.min()))} – {_fmt(float(y_arr.max()))}]")
+    print()
+    print(f"  {'Modèle':<14}  {'R² CV':>8}  {'MAE OOF':>9}  {'RMSE OOF':>10}  "
+          f"{'r(obs,pred)':>12}  {'Biais moyen':>12}  {'σ résidus':>10}")
+    print(f"  {_sep('─', 78)}")
+
+    for name, color, y_pred, r2 in models_to_plot:
+        mask = np.isfinite(y_arr) & np.isfinite(y_pred)
+        if mask.sum() == 0:
+            continue
+        yo, yp = y_arr[mask], y_pred[mask]
+        res_cv  = results.get(name, {})
+        mae_oof = float(np.mean(np.abs(yo - yp)))
+        rmse    = float(np.sqrt(np.mean((yo - yp)**2)))
+        biais   = float(np.mean(yp - yo))
+        sigma_r = float(np.std(yo - yp))
+        r_corr  = float(np.corrcoef(yo, yp)[0, 1]) if len(yo) > 2 else float("nan")
+        mae_cv  = res_cv.get("mae_cv_mean", float("nan"))
+
+        print(f"  {name:<14}  {_fmt(r2):>8}  {_fmt(mae_oof):>9}  {_fmt(rmse):>10}  "
+              f"{_fmt(r_corr):>12}  {_fmt(biais, plus=True):>12}  {_fmt(sigma_r):>10}")
+
+        # Distribution des résidus par quartile
+        residuals = yo - yp
+        q25, q50, q75 = np.percentile(residuals, [25, 50, 75])
+        print(f"  {'':14}  Résidus (obs−pred) : p25={_fmt(q25, plus=True):>7}  "
+              f"p50={_fmt(q50, plus=True):>7}  p75={_fmt(q75, plus=True):>7}  "
+              f"IQR={_fmt(q75-q25)}")
+
+        # Comparaison MAE CV vs MAE OOF
+        if not math.isnan(mae_cv):
+            delta_mae = mae_oof - mae_cv
+            print(f"  {'':14}  MAE CV={_fmt(mae_cv)}  MAE OOF={_fmt(mae_oof)}  "
+                  f"Δ={_fmt(delta_mae, plus=True):>7}  "
+                  f"{'⚠  écart notable' if abs(delta_mae) > 0.05 else 'cohérent'}")
+        print()
+
+    print(f"  {_sep()}")
+    # ── fin LOG ───────────────────────────────────────────────────────────────
+
     n_plots = len(models_to_plot)
     fig, axes = plt.subplots(1, n_plots, figsize=(5.5 * n_plots, 5.5), sharey=True)
     fig.patch.set_facecolor(BG)
     if n_plots == 1:
         axes = [axes]
 
-    y_arr = np.array(y_true)
     global_min = min(y_arr.min(), min(p.min() for _, _, p, _ in models_to_plot)) - 0.2
     global_max = max(y_arr.max(), max(p.max() for _, _, p, _ in models_to_plot)) + 0.2
 
@@ -533,12 +774,18 @@ class RegressionFigure:
     fig9  — Sélection ElasticNet vs Ridge
     fig10 — Forest plot LMM (IC 95%)
     fig11 — Scatter observé vs prédit (OOF)
+
+    v4.1 : chaque fig*() émet un bloc de log avant sauvegarde.
     """
 
     @staticmethod
     def plot(results, df, features, out_dir, df_raw=None, verbose=False):
         out_dir = Path(out_dir)
         y_true  = df["groove_mean"].values if "groove_mean" in df.columns else None
+
+        print(f"\n{'═'*72}")
+        print(f"  GÉNÉRATION DES FIGURES — régression groove")
+        print(f"{'═'*72}")
 
         fig3_interaction_heatmap(df, out_dir, verbose=verbose)
         fig8_model_comparison(results, out_dir, verbose=verbose)
@@ -547,3 +794,29 @@ class RegressionFigure:
 
         if y_true is not None:
             fig11_observed_vs_predicted(results, y_true, out_dir, verbose=verbose)
+        else:
+            print("  [fig11] groove_mean absent dans df — ignorée")
+
+        # ── Récapitulatif des fichiers produits ───────────────────────────────
+        expected = [
+            "fig3_interaction_heatmap.png",
+            "fig8_model_comparison.png",
+            "fig9_elasticnet_selection.png",
+            "fig10_forest_plot_lmm.png",
+            "fig11_observed_vs_predicted.png",
+        ]
+        print(f"\n  {'─'*50}")
+        print(f"  Récapitulatif figures → {out_dir}")
+        print(f"  {'─'*50}")
+        n_ok = 0
+        for fname in expected:
+            p = out_dir / fname
+            if p.exists():
+                size_kb = p.stat().st_size / 1024
+                print(f"  ✔  {fname:<42}  ({size_kb:.0f} KB)")
+                n_ok += 1
+            else:
+                print(f"  ✗  {fname:<42}  MANQUANT")
+        print(f"  {'─'*50}")
+        print(f"  {n_ok}/{len(expected)} figures produites")
+        print(f"{'═'*72}\n")

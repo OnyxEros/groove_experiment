@@ -40,25 +40,33 @@ class VizStep(AnalysisStep):
         fig_dir.mkdir(parents=True, exist_ok=True)
 
         # ── Figure 1 : Validation générative ─────────────────────────────────
-        # Données générées (répétitions stochastiques) → analyse du moteur
         try:
+            print("\n" + "═"*64)
+            print("  🎛  FIGURE 1 — Validation du Moteur Génératif")
+            print("═"*64)
             GenerativeValidation().plot(
                 df      = df_gen,
                 path    = fig_dir / "generative_validation.pdf",
                 verbose = True,
             )
+            print(f"\n  ✔  generative_validation.pdf  ({len(df_gen)} stimuli)")
         except Exception as e:
             print(f"⚠️  [VizStep] GenerativeValidation échouée : {e}")
 
         # ── Figure 2 : Structure du dataset ──────────────────────────────────
-        # Données réelles (corpus unique) → analyse structurelle
         try:
+            print("\n" + "═"*64)
+            print("  📊  FIGURE 2 — Structure du Dataset Réel")
+            print("═"*64)
             DatasetStructureFigure().plot(
                 df      = df_real,
                 path    = fig_dir / "dataset_structure.pdf",
                 verbose = True,
             )
+            print(f"\n  ✔  dataset_structure.pdf  ({len(df_real)} stimuli)")
         except Exception as e:
             print(f"⚠️  [VizStep] DatasetStructureFigure échouée : {e}")
+
+        print("\n" + "═"*64 + "\n")
 
         return context
