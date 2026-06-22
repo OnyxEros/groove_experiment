@@ -194,6 +194,10 @@ def run_perception_space(perception_data: pd.DataFrame) -> dict:
     # ── 2. Chargement embeddings ──────────────────────────────────────────────
     print(_sub("2. Chargement du run d'analyse"))
     analysis = load_analysis_run(run_dir)
+
+    from analysis.dataset.loader import load_dataset
+    df_real = load_dataset()
+
     X_full, clusters = analysis["realized"], analysis["clusters"]
     stim_id_to_row = analysis["stim_id_to_row"]
     umap_2d_full   = analysis["umap_2d"]
@@ -511,9 +515,15 @@ def run_perception_space(perception_data: pd.DataFrame) -> dict:
               f"CI95=±{_fmt(ci95_c) if math.isfinite(ci95_c) else 'n/a'}")
     print(f"  {_sep()}")
 
+    df_real_aligned = df_real.iloc[aligned_rows].reset_index(drop=True) if df_real is not None else None
     _safe_fig("cluster_groove.png", plot_cluster_groove, fig_dir,
-              fig_errors=fig_errors,
-              embedding=X_norm, clusters=clusters_aligned, groove=y_groove_agg)
+          fig_errors=fig_errors,
+          embedding=X_norm,
+          clusters=clusters_aligned,
+          groove=y_groove_agg,
+          semantics=analysis.get("cluster_semantics"),
+          df_realized=df_real_aligned,   # ← fix
+          umap_2d=umap_2d_aligned)
 
     # ── LOG fig : local_geometry_groove ─────────────────────────────────────
     print(f"  {_sep()}")

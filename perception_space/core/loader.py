@@ -84,6 +84,19 @@ def load_analysis_run(run_dir: Path) -> dict:
     assert len(stim_id_map) == n, \
         f"stim_id_map ({len(stim_id_map)}) ≠ realized ({n})"
 
+    # Sémantique clusters (produite par ClusteringStep → ExportStep)
+    semantics_path = run_dir / "interpretation.json"
+    if semantics_path.exists():
+        try:
+            cluster_semantics = {
+                int(k): v
+                for k, v in json.loads(semantics_path.read_text()).items()
+            }
+        except Exception:
+            cluster_semantics = {}
+    else:
+        cluster_semantics = {}
+
     return {
         "structural":     structural,
         "realized":       realized,

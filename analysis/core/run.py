@@ -26,6 +26,7 @@ _PIPELINES = {
     "full": [
         "embeddings",
         "projection",
+        "clustering",
         "viz",
         "export",
     ],
